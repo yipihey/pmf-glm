@@ -156,6 +156,12 @@ To continue, change `resume=true`, preserve all evolution settings, and rerun
 against the same output directory. Extending `cosmology.zend` is allowed by
 the driver; changing its physical history is not generally compatible.
 The wrapper additionally rejects a changed source fingerprint.
+It also compares all resolved evolution options with the original run metadata,
+including the cosmology, physical box/field normalization, chemistry units and
+helium treatment. Only endpoint/cycle-budget, resume/checkpoint cadence, logging,
+and the listed output-cadence controls can change. An incompatible physical
+configuration is rejected before the previous metadata is overwritten.
+{{< src "src/provenance.jl" "_validate_restart_environment" >}}
 
 ```sh
 julia --project=. -t auto scripts/run_pmf.jl path/to/resume.toml \

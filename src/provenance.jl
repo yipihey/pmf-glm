@@ -38,6 +38,21 @@ function _completion_status(log::AbstractString,env)
     z <= target + 1e-6*max(1,target) ? "COMPLETED" : "STOPPED_AT_LIMIT"
 end
 
+const RESTART_CONTROL_OPTIONS = Set([
+    "MHD_ZEND", "MHD_STEPS", "MHD_MAX_CYCLES", "MHD_CHECKPOINT_RESUME",
+    "MHD_CHECKPOINT_EVERY", "MHD_CHECKPOINT_FINAL", "MHD_PRINT_EVERY",
+    "MHD_CYCLE_PRINT_EVERY", "MHD_CHECK_EVERY", "MHD_PK_ZS", "MHD_PK_EVERY",
+])
+
+function _validate_restart_environment(previous,current)
+    changed = sort!([String(key) for key in union(keys(previous),keys(current))
+        if !(key in RESTART_CONTROL_OPTIONS) &&
+           get(previous,key,nothing) != get(current,key,nothing)])
+    isempty(changed) || error("restart changes evolution options: " * join(changed,", ") *
+        "; use the original physical settings or start a new run")
+    nothing
+end
+
 """
     run_simulation(config; output_dir, dry_run=false)
 
@@ -60,6 +75,7 @@ function run_simulation(c::RunConfig; output_dir::AbstractString, dry_run::Bool=
         previous = TOML.parsefile(joinpath(out,"metadata.toml"))
         previous["source_fingerprint_sha256"] == source_fingerprint() ||
             error("checkpoint source fingerprint differs; migration requires explicit review")
+        _validate_restart_environment(previous["environment"],env)
     end
     metadata = _run_metadata(c,env)
     function write_toml(path,payload)

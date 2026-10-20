@@ -1,7 +1,17 @@
 name: Numerical validation
 on:
   push:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - CITATION.cff
+      - LICENSE
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - CITATION.cff
+      - LICENSE
   workflow_dispatch:
 permissions:
   contents: read

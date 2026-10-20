@@ -22,6 +22,15 @@ env = run_environment(config;output_dir="/tmp/pmf-config-test")
 @test all(startswith(k,"MHD_") for k in keys(env))
 @test length(source_fingerprint()) == 64
 @test source_fingerprint() == source_fingerprint()
+@test PMFGLM._validate_restart_environment(env,merge(env,Dict(
+    "MHD_CHECKPOINT_RESUME"=>"true","MHD_MAX_CYCLES"=>"1000000",
+    "MHD_ZEND"=>"100","MHD_PRINT_EVERY"=>"1000"))) === nothing
+for (key,value) in ("MHD_H"=>"0.7","MHD_OB"=>"0.04",
+                    "MHD_TERMINAL_LBOX_CKPC"=>"2.0","MHD_PMF_B0_NG"=>"0.01",
+                    "MHD_CHEM_VUNIT"=>"1000000","MHD_CHEM_HELIUM"=>"false",
+                    "MHD_CFL"=>"0.1","MHD_RADIATION_RESPONSE_MODEL"=>"bridge")
+    @test_throws ErrorException PMFGLM._validate_restart_environment(env,merge(env,Dict(key=>value)))
+end
 @test PMFGLM._completion_status("COSMO final_z=500.000000 final_a=0.001",Dict("MHD_ZSTART"=>"3200","MHD_ZEND"=>"500")) == "COMPLETED"
 @test PMFGLM._completion_status("COSMO final_z=1000.000000",Dict("MHD_ZSTART"=>"3200","MHD_ZEND"=>"500")) == "STOPPED_AT_LIMIT"
 @test PMFGLM._completion_status("no final epoch",Dict("MHD_ZSTART"=>"3200")) == "INCOMPLETE"
