@@ -22,6 +22,7 @@ a.qd-test {
 .callout, pre, .sourceCode { border-radius: var(--qd-radius); }
 main { min-width: 0; }
 main p, main li, main td { overflow-wrap: anywhere; }
+main :not(pre) > code { white-space: normal; overflow-wrap: anywhere; }
 .table { font-size: 0.9rem; }
 .cell-output-display, .katex-display { overflow-x: auto; overflow-y: hidden; }
 pre { max-width: 100%; }
@@ -30,4 +31,7 @@ pre { max-width: 100%; }
   h1.title { font-size: 2rem; }
   h2 { font-size: 1.5rem; }
   .table { font-size: 0.82rem; }
+  main .table { width: 100%; table-layout: fixed; }
+  main .table th, main .table td { overflow-wrap: anywhere; }
+  main .table code { white-space: normal; overflow-wrap: anywhere; }
 }

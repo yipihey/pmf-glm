@@ -13,9 +13,9 @@ python3 docs/scripts/check_links.py docs/_site
 quarto preview docs --no-browser
 ```
 
-In a restricted macOS workspace that cannot write the ordinary Quarto cache,
-prefix the render command with `HOME="$PWD/docs/.quarto/home"`. This keeps
-Quarto's own cache inside the ignored workspace; it is not needed in normal CI.
+Quarto needs write access to its normal cache when rendering. In a restricted
+execution environment, grant that access before building; ordinary CI needs no
+special cache configuration.
 
 `prepare.py` is a pre-render hook; it writes ignored `_variables.yml`,
 `_includes/`, and local source viewers in `sources/`. It never modifies package

@@ -171,6 +171,8 @@ def assess(output, handoff, args):
         explicit_helium_perturbation="model extension; xHII above z1700 diagnostic",
         thermal_perturbations="full-network extension; not gated against reduced oracle",
         response_table=str(args.response_table) if args.response_table else None,
+        response_table_sha256=(hashlib.sha256(args.response_table.read_bytes()).hexdigest()
+            if args.response_table else None),
         amplitude_tolerance=args.amplitude_tolerance,phase_tolerance_rad=args.phase_tolerance,
         active_observables=len(active),failures=[r for r in active if r["status"]=="FAIL"],
         max_amplitude_error=max(r["amplitude_error"] for r in active),
@@ -218,6 +220,8 @@ def main():
     parser.add_argument("--response-table",type=Path)
     parser.add_argument("--execute",action="store_true")
     args=parser.parse_args()
+    if not (ROOT/"scripts"/"run_pmf.jl").is_file():
+        parser.error("the native Julia comparison requires the pmf-glm source checkout; run it from an editable installation there")
     if not args.source_zstart>args.zstart>args.zend>0 or args.outputs<2 or args.resolution<8 or args.resolution%2:
         parser.error("require source-zstart > zstart > zend >0, even resolution >=8, outputs >=2")
     output=args.output.resolve()

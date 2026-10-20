@@ -29,6 +29,9 @@ jobs:
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1.12'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Bootstrap selected GPU
         run: julia --project=. --threads=${{ inputs.threads }} scripts/bootstrap.jl --backend=${{ inputs.backend }}
       - name: Operator and CPU-device parity gates

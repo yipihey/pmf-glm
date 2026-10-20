@@ -124,6 +124,19 @@ The two panels are a central density slice and a line-of-sight **maximum**, not
 an integrated column density. Fixed color limits support epoch-to-epoch
 comparison; supplied physical box units label axes in comoving kpc without h.
 
+With FFmpeg installed separately, combine the cycle-sorted PNGs into a movie:
+
+```sh
+ffmpeg -framerate 12 -pattern_type glob -i 'results/frame-plots/density_cycle*.png' \
+  -vf 'scale=1440:640:force_original_aspect_ratio=decrease,pad=1440:640:(ow-iw)/2:(oh-ih)/2' \
+  -c:v libx264 -pix_fmt yuv420p results/density-evolution.mp4
+```
+
+Keep the same log-density color limits for every frame and comparison run.
+The fixed output dimensions also avoid small caption/bounding-box differences
+changing the encoded frame size. Archive `frames.json` and the original tables
+with the movie so its epochs and color normalization remain recoverable.
+
 Keep raw tables alongside generated figures. Plot captions should state the
 field, actual redshift, physical units, band/window, normalization, and whether
 the plotted quantity is `P(k)` or dimensionless `k^3 P/(2*pi^2)`.
