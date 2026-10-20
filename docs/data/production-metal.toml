@@ -1,18 +1,18 @@
 backend = "metal"
 cosmology_status = "COMPLETED"
-created_utc = "2026-10-20T16:56:18.720"
+created_utc = "2026-10-20T17:19:26.174"
 julia_threads = 4
 julia_version = "1.12.6"
 machine = "PHY-FD69NP6NG2"
 restart_error_tolerance = 5.0e-6
 restart_fields = 22
 restart_max_scaled_error = 7.275957614183426e-12
-run_directory = "results/production-metal-4mVTxH"
+run_directory = "results/production-metal-bvrRcX"
 schema_version = 1
 scope = "full-physics endpoint smoke plus four-cycle full-MHD/photon/H-He-chemistry/gravity restart parity"
-source_fingerprint_sha256 = "c75ab3996078559a3aec819e090e71190798eca86c8d91a6f927d340f4508e21"
+source_fingerprint_sha256 = "d3871a0a7f907d9dd7c4f23b59924e0413acd65b3dd744b751f148ec81441f73"
 status = "PASS"
-wall_seconds = 191.88357591629028
+wall_seconds = 189.76802802085876
 
 [restart_field_errors]
 chem_H2I = 0.0

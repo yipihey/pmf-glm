@@ -1,2 +1,5 @@
+Precompiling packages...
+    585.7 ms  ✓ PMFGLM
+  1 dependency successfully precompiled in 1 seconds. 55 already precompiled.
 Test Summary:                | Pass  Total   Time
-PMFGLM metal Float32 backend |  243    243  28.8s
+PMFGLM metal Float32 backend |  243    243  27.3s
