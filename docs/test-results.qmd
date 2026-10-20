@@ -1,0 +1,54 @@
+---
+title: "Recorded test results"
+---
+
+## Read the evidence {#sec-current-evidence}
+
+This page reads actual JSON/TOML files under `docs/data` at render time. It
+does not execute the solver, infer a pass from source code, or assign historical
+campaign results to this checkout. The source revision of this site is
+**{{< var build.sha >}}**, rendered **{{< var build.rendered >}}**.
+
+Inspect each record's source fingerprint, command, backend, hardware/platform,
+timestamp, scope, exit status, and log. `NOT_RUN` means not measured;
+`PASS` applies only to that command and source fingerprint. A later code change
+can leave an earlier record stale even when this page renders successfully.
+
+{{< prepared "validation" >}}
+
+## Production and restart checks {#sec-production-evidence}
+
+The end-to-end gate executes a full-physics cosmological smoke case and compares
+every checkpointed field after four continuous steps against two steps followed
+by a fresh-process restart to step four. This tests real launcher and checkpoint
+behavior in addition to the operator suites. These short tests establish
+installation and restart consistency; the science convergence matrix remains
+necessary for a physical result.
+
+```sh
+julia --project=. -t 4 scripts/validate_production.jl --backend=cpu
+julia --project=environments/metal -t 4 scripts/validate_production.jl --backend=metal
+```
+
+{{< prepared "production" >}}
+
+## Reproduce or update {#sec-update-evidence}
+
+```sh
+julia --project=. -t auto scripts/validate.jl --backend=cpu
+# On a Metal host, after Metal bootstrap:
+julia --project=environments/metal -t auto scripts/validate.jl --backend=metal
+# On an NVIDIA host, after CUDA bootstrap:
+julia --project=environments/cuda -t auto scripts/validate.jl --backend=cuda
+quarto render docs --fail-if-warnings
+python3 docs/scripts/check_links.py docs/_site
+```
+
+`validation.json` aggregates the backend records;
+`validation-{backend}.json` and `validation-{backend}.log` retain the individual
+run evidence. Optional TOML records are also displayed. Failed runs and skipped
+devices must not be relabeled as a successful extraction validation.
+
+The documentation build accepts evidence without requiring a GPU, Julia,
+external campaign directory, or numerical rerun. A green Pages build establishes
+documentation/link integrity, not science certification.

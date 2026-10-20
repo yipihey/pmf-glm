@@ -1,0 +1,113 @@
+---
+title: "Configuration reference"
+---
+
+## Configuration layers {#sec-configuration-layers}
+
+The supported entry point is `scripts/run_pmf.jl CONFIG.toml --output=RUN_DIR`.
+The facade validates TOML tables, applies safe wrapper defaults, resolves named
+keys to `MHD_*` options, sets output paths, and finally applies `[environment]`
+overrides. The child process does not inherit unrelated shell `MHD_*` variables.
+Read `resolved-environment.toml`, not just your input file, when reviewing a run.
+{{< src "src/configuration.jl" "function run_environment" >}}
+
+`--backend=cpu|metal|cuda` overrides the named `run.backend`; use the matching
+active project. A conflicting low-level `[environment] MHD_BACKEND` override
+comes later, so avoid expressing the same choice in both places.
+
+Unknown sections, named options, and unrecognized low-level option names are
+errors. Validation is not a science certification and does not replace review
+of units, mode support, or the runner's additional runtime checks.
+
+## Shipped experiments {#sec-examples}
+
+| File | Purpose | Boundary |
+|---|---|---|
+| `examples/smoke.toml` | `16^3`, four-step MHD plus lattice gravity | Noncosmological, chemistry off |
+| `examples/cosmology-smoke.toml` | Small full-physics installation check | Very short redshift interval, not converged |
+| `examples/pmf-recombination.toml` | Editable recombination research setup | Requires the validation matrix; not a certified production prescription |
+| `examples/convergence-suite.toml` | Serialized grid/timestep cases sharing a base config | Case definition, not measured certification |
+
+## Named tables {#sec-named-tables}
+
+These keys map to the public environment interface. The authoritative mapping
+and validation are in `CONFIG_KEYS`.
+{{< src "src/configuration.jl" "CONFIG_KEYS" >}}
+
+| Table | Common keys | Meaning |
+|---|---|---|
+| `[run]` | `n`, `backend`, `precision`, `steps`, `max_cycles`, `cfl` | Grid, device, numerical budget |
+| `[run]` | `reconstruction`, `riemann`, `print_every`, `check_every` | Scheme and log/health cadence |
+| `[run]` | `checkpoint_every`, `checkpoint_final`, `resume` | Checkpoint write/resume policy |
+| `[cosmology]` | `zstart`, `zend`, `h`, `omega_m`, `omega_b`, `omega_lambda`, `omega_r` | Expansion history |
+| `[cosmology]` | `box_ckpc_h`, `max_dln_a` | Physical comoving box in ckpc/h, expansion step cap |
+| `[magnetic]` | `initial_condition`, `b0_ng`, `brms_code`, `seed` | IC family, comoving nG or code amplitude |
+| `[magnetic]` | `kmin`, `kcut`, `kmax`, `mode_lock_n`, `curl_symbol`, `curl_reference_n` | Band, discrete operator, shared modes |
+| `[magnetic]` | `normalization`, `reference_kmax`, `reference_kcut`, `minimum_cells_per_wavelength` | Explicit amplitude band and resolution requirement |
+| `[magnetic]` | `fixed_mode_power`, `mode_realization`, `realization_box` | Gaussian/fixed realization and physical hashing |
+| `[chemistry]` | `mode`, `helium`, `coupling`, `expansion` | Network and operator split |
+| `[chemistry]` | `smoothing`, `smoothing_sigma_cells`, `dt_fraction`, `hydrogen_storage` | Mixing approximation and integration controls |
+| `[chemistry]` | `ionized_fast_zmin`, `velocity_unit_cms`, `x_hii_initial`, `x_h2_initial`, `nonlocal_table` | Ionized shortcut, physical conversion, initial abundances, table input |
+| `[physics]` | `gravity`, `gas_gravity`, `compton_drag`, `drag_mode`, `photon_response` | Coupled physical model |
+| `[physics]` | `fft`, `pressure`, `scaling`, `photon_max_dln_a`, `nonlinear_cfl` | Transforms, thermal normalization, clocks, response caps |
+| `[physics]` | `glm_project_every`, `glm_ch_factor`, `particle_max_displacement_cells` | Divergence projection and trajectory controls |
+| `[diagnostics]` | `redshifts`, `every`, `adaptive_fraction` | Requested outputs and adaptive histories |
+| `[diagnostics]` | `spectrum_bins`, `angle_bins`, `pdf_bins`, `energy_ledger_every` | Estimator resolution and energy sampling |
+
+`n` must be even and at least 8. The facade requires finite `zstart > zend >= 0`,
+a positive physical box, and a positive comoving `b0_ng` for cosmological configs.
+Some transform paths impose additional size/factorization restrictions.
+
+## Defaults are context-dependent {#sec-defaults}
+
+The facade's short-run defaults differ intentionally from invoking the
+extracted runner directly:
+
+| Choice | Facade behavior |
+|---|---|
+| Device / precision | CPU / Float32 unless specified |
+| Grid / fixed-time budget | `n=16`, four steps, `cfl=0.2` |
+| Warmup | Zero, including cosmological runs |
+| Restart / final checkpoint | Disabled unless requested |
+| FFT | `auto`, selected per backend |
+| Cosmological pressure / magnetic clock | `pressure="auto"`, `scaling="jedamzik"` |
+| Cosmological drag / photons | Full-MHD radiation, `moments_exponential` |
+| Cosmological chemistry | Full mixing with helium, centered H storage, expansion on, Strang half-steps |
+| Ionized shortcut | Off: `MHD_CHEM_IONIZED_FAST_ZMIN=0` |
+| Gaussian smoothing | Eight cells unless configured |
+| Nonlinear response CFL | `0.1` for cosmological facade defaults |
+
+The recombination example sets some of these explicitly and can differ from
+wrapper defaults, including GLM projection cadence. Inspect the resolved run
+before comparing experiments. A smoothing width in **cells** changes physically
+when `n` changes; scale it for fixed-physical-width convergence tests.
+
+## Escape hatch {#sec-environment-overrides}
+
+```toml
+[environment]
+MHD_PK_KMAX = 100.53096491487338
+MHD_RADIATION_FREE_STREAM_TOL = 0.0
+MHD_PMF_NORMALIZATION_Z = 10000.0
+MHD_PMF_HIGH_MODE_LOCK_N = 128
+```
+
+These override named mappings and facade defaults. Paths are resolved by the
+launched process, so use explicit paths for imported initial states and response
+tables. Keep runs launched from the repository root. Numerical options with
+special encodings should follow their parser, not a guessed boolean conversion.
+`MHD_GRAVITY`, for example, uses `true`/`false`.
+
+Do not enable `terminal` or `hybrid` as an automatic speed optimization.
+They require `MHD_ALLOW_UNCERTIFIED_TERMINAL=1` and remain legacy comparisons.
+Neither a larger source cadence nor a nonzero free-streaming tolerance is a
+free accuracy improvement; validate them against a tighter reference.
+
+## Complete driver option index {#sec-environment-index}
+
+This index is generated from `get(ENV, "MHD_...", ...)` calls in the actual
+extracted driver. Each link opens its parsing/default logic in the local source
+snapshot. A default can depend on other options; the curated tables above and
+the resolved environment describe the public facade.
+
+{{< prepared "environment" >}}

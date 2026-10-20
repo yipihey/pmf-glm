@@ -1,0 +1,20 @@
+# Adapted from quadrant/template/_brand.yml; retain the shared scientific palette.
+meta:
+  name: PMFGLM.jl
+  link:
+    home: https://yipihey.github.io/pmf-glm/
+    github: https://github.com/yipihey/pmf-glm
+color:
+  palette:
+    blue: "#0072b2"
+    sky: "#56b4e9"
+    orange: "#d55e00"
+    green: "#009e73"
+    ink: "#1f2328"
+    paper: "#ffffff"
+  primary: blue
+  secondary: sky
+  success: green
+  warning: orange
+  foreground: ink
+  background: paper

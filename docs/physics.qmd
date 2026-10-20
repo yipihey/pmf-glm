@@ -1,0 +1,155 @@
+---
+title: "Equations and numerical methods"
+---
+
+## GLM magnetohydrodynamics {#sec-glm}
+
+The MHD state stores nine conserved fields in structure-of-arrays order
+`(rho, rho*vx, rho*vy, rho*vz, E, Bx, By, Bz, psi)`. Code magnetic units absorb
+`4*pi`, so magnetic pressure is `B^2/2`, not `B^2/(8*pi)`.
+{{< src "lib/MHDKernels/src/state.jl" "allocate_state" >}}
+
+The local ideal-MHD flux operator has continuity, momentum, and induction terms
+
+$$
+\partial_t\rho+\nabla\cdot(\rho\mathbf v)=0,
+\qquad
+\partial_t(\rho\mathbf v)+\nabla\cdot\left[
+\rho\mathbf v\mathbf v+(p+B^2/2)\mathbf I-\mathbf B\mathbf B\right]
+=\mathbf S_m,
+$$ {#eq-mhd-momentum}
+
+$$
+\partial_t\mathbf B+\nabla\cdot(\mathbf v\mathbf B-\mathbf B\mathbf v)
++\nabla\psi=0,
+\qquad
+p=(\gamma-1)\left(E-\frac{\rho v^2}{2}-\frac{B^2}{2}\right).
+$$ {#eq-induction}
+
+Here the induction tensor is understood componentwise as the flux
+`v_j B_i - B_j v_i` in direction `j`. The GLM scalar propagates magnetic
+divergence at the cleaning speed and is damped by the mixed hyperbolic/parabolic
+cleaning update. The energy flux is
+`(E+p+B^2/2)*v - (v dot B)*B`; external gravity, drag, expansion-aware chemistry,
+and radiation response are coupled by their respective source updates, not
+inserted as an unqualified isolated-box conservation law.
+{{< src "lib/MHDKernels/src/glm_physics.jl" "glm" >}}
+
+The production scheme uses finite-volume Godunov updates with PPM reconstruction
+and HLLD [@miyoshi2005] with GLM cleaning [@dedner2002] unless configured
+otherwise; PLM is used by the tiny installation
+examples. LLF fallback and positivity handling can change the local numerical
+diffusion and must be monitored. A portable reference integrator and fused cube
+integrator coexist. Shared source is not a substitute for backend parity tests.
+
+## Magnetic-force decomposition {#sec-force-split}
+
+The centered Maxwell-stress diagnostic uses
+
+$$
+\mathbf F_P=-\nabla(B^2/2),\qquad
+\mathbf F_T=\nabla\cdot(\mathbf B\mathbf B),\qquad
+\mathbf F_L=\mathbf F_P+\mathbf F_T.
+$$ {#eq-maxwell}
+
+The divergence form equals `(B dot grad) B` only when magnetic divergence is
+negligible. The force used by the radiation coupling and diagnostic split uses
+the same centered stencil.
+{{< src "lib/MHDKernels/src/terminal_ct.jl" "terminal_magnetic_force_split!" >}}
+
+## Expansion, units, and clocks {#sec-clocks}
+
+The run evolves `a=1/(1+z)` and a dimensionless supercomoving clock `tau` with
+
+$$
+\frac{da}{d\tau}=
+\sqrt{a^3\left(\Omega_m+\Omega_\Lambda a^3+\Omega_k a+\Omega_r/a\right)},
+\qquad \Omega_k=1-\Omega_m-\Omega_\Lambda-\Omega_r.
+$$ {#eq-clock}
+
+Radiation density is included in early starts. The driver converts this clock
+to physical source times and MHD code time; it does **not** equate an MHD step
+to a physical second. `legacy` and `jedamzik` clock scalings are distinct
+model choices, with the facade using the latter for cosmological runs.
+{{< src "src/production/runner.jl" "dadtau" >}}
+{{< src "src/production/runner.jl" "function _hydro_time_per_tau" >}}
+
+For a comoving field amplitude in nG specified at `z_ref`, the initializer uses
+
+$$
+B_{\rm phys}=10^{-9}B_{0,\rm nG}(1+z_{\rm ref})^2\ {\rm G},\qquad
+B_{\rm code}=\frac{B_{\rm phys}}{v_{\rm unit}\sqrt{4\pi\rho_b(z_{\rm ref})}}.
+$$ {#eq-field-units}
+
+`3 pG = 0.003 nG`. The physical density follows the selected baryon cosmology.
+`MHD_CHEM_VUNIT` is in cm/s; it is not a box velocity in km/s. The pressure
+initializer with `pressure="auto"` uses the same CMB convention as the
+chemistry, `T_CMB=2.725(1+z) K`, including particle-number contributions from
+helium and electrons.
+{{< src "src/production/runner.jl" "function _pmf_code_brms_from_comoving_ng" >}}
+{{< src "src/production/runner.jl" "function _cosmological_ionized_p0" >}}
+
+The TOML box is ckpc/h. The facade divides it by `h` for the driver's comoving
+ckpc length. The diagnostic spectrum has a separate numeric box parameter;
+see [wavenumber units](notation.qmd#sec-wavenumbers) before plotting it.
+
+## Photon-baryon response {#sec-photon-model}
+
+The evolved-moment closure retains photon density and three photon velocity
+components. In its linear Fourier response subproblem, consistent code-time
+derivatives obey
+
+$$
+\begin{aligned}
+\delta_b'&=-i\mathbf k\cdot\mathbf v_b,\\
+\mathbf v_b'&=-i\mathbf k c_s^2\delta_b+
+\Gamma(\mathbf v_\gamma-\mathbf v_b)+\mathbf F_{\rm MHD},\\
+\delta_\gamma'&=-\tfrac43 i\mathbf k\cdot\mathbf v_\gamma,\\
+\mathbf v_\gamma'&=-\tfrac14 i c^2\mathbf k\delta_\gamma+
+R\Gamma(\mathbf v_b-\mathbf v_\gamma)-S_\gamma(k)\mathbf v_\gamma,
+\end{aligned}
+$$ {#eq-photon-moments}
+
+where `R=3*rho_b*c^2/(4*rho_gamma_energy)` and `Gamma` is the converted
+Compton-drag rate. Equal and opposite scattering momentum transfers recover
+the tight-coupling sound speed `c^2/[3(1+R)]`. An algebraic nonlocal stress
+closure replaces independent quadrupole fields, approaching diffusion damping
+at small `k*lambda_gamma` and phase mixing toward free streaming.
+{{< src "lib/MHDKernels/src/radiation_coupling.jl" "_photon_stress_rates" >}}
+
+`moments` uses a second-order L-stable SDIRK response; `moments_exponential`
+is the exponential variant chosen by the facade. They should not be described
+as identical integrators. Legacy `angular` and `bridge` models remain comparison
+options, not higher-order photon hierarchies.
+
+The full MHD update remains active. Spectral predictors and correctors adjust
+both density and velocity relative to local drag, avoiding double-counting its
+effect. Default photon ICs are adiabatic and comoving with gas; controls are
+`MHD_RADIATION_PHOTON_ADIABATIC` and `MHD_RADIATION_PHOTON_COMOVING`.
+{{< src "lib/MHDKernels/src/radiation_coupling.jl" "step_radiation_godunov!" >}}
+
+The positive `MHD_RADIATION_FREE_STREAM_TOL` optimization can omit the spectral
+gas correction when its bound is small, while still evolving photons. Compare
+against zero tolerance before interpreting its accuracy or speed.
+
+## Gravity and chemistry {#sec-gravity-chemistry}
+
+The periodic Poisson solve removes the homogeneous source and combines gas and
+lattice-DM perturbations with the configured baryon/DM weights. The default
+midpoint density source and particle updates are time-centered. Lattice
+displacements reduce cancellation when tiny density perturbations are evolved;
+they are not an imported cosmological particle realization.
+{{< src "lib/MHDKernels/src/gravity_coupling.jl" "gravity" >}}
+{{< src "src/production/runner.jl" "_assemble_total_perturbation_k!" >}}
+
+The full mixing chemistry couples hydrogen/helium abundances, thermal energy,
+and recombination response. The facade uses symmetric half-steps around MHD and
+an expansion-aware source clock. Centered hydrogen storage protects small
+perturbations relative to a changing homogeneous ionization reference; it must
+be reconstructed before interpreting an abundance array as `x_HII`.
+{{< src "src/production/runner.jl" "chem_hydrogen_storage" >}}
+
+Gaussian smoothing approximates mixing. Optional nonlocal response tables add
+a separately modeled, support-limited response. Neither path solves full
+three-dimensional Lyman-alpha transfer; [validation limits](validation.qmd#sec-limitations)
+are part of the model specification.

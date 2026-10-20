@@ -1,0 +1,84 @@
+---
+title: "Notation and conventions"
+---
+
+## Units and state {#sec-unit-table}
+
+| Symbol / quantity | Convention |
+|---|---|
+| `a`, `z` | Scale factor and redshift, `a=1/(1+z)` |
+| `tau` | Dimensionless supercomoving expansion clock, @eq-clock |
+| `rho`, `p`, `E`, `v`, `B` | MHD code quantities, not unqualified cgs values |
+| `psi` | Mixed-GLM divergence-cleaning scalar |
+| `gamma` | Gas adiabatic index |
+| `rho_b(z)` | Physical mean baryon density used for cgs conversion |
+| `B0_ng` | Comoving magnetic amplitude in nG at the declared normalization epoch/band |
+| `B_phys` | Physical field in G, @eq-field-units |
+| `v_unit` | `MHD_CHEM_VUNIT`, cm/s |
+| `T` | Gas temperature, K; `T_CMB=2.725(1+z) K` |
+| `x_HII` | Hydrogen ionization fraction; not the total electron fraction |
+| `xe_total` | Electrons per hydrogen nucleus including the selected helium model |
+| `HII`, `H2I`, `HeII` arrays | Stored species payloads; interpret mass weighting and centered/neutral storage before reading as fractions |
+| `R` | `3*rho_b*c^2/(4*rho_gamma_energy)` in the photon model |
+| `lambda_gamma` | Physical Thomson mean free path; divided by physical box in code closure |
+| `q` | `k_phys*lambda_gamma`, dimensionless |
+
+Coordinates are periodic in a unit code cube for the production runner.
+Cell centers are `(i-1/2)/N`; Fourier integer modes use `2*pi*n/L`, with the
+forward transform convention `exp(-i*k*x)` and inverse `exp(+i*k*x)`. RFFT
+storage keeps the first spatial axis as a half spectrum. A fourth transform
+dimension in the photon workspace is a channel, not a spatial coordinate.
+
+## Wavenumbers and spectra {#sec-wavenumbers}
+
+The physical TOML box is `L_h=cosmology.box_ckpc_h`, a comoving length in ckpc/h.
+Its length in ckpc is `L_h/h`. Magnetic `kcut`, `kmax`, and the spectrum's
+numeric `k` follow the driver's coordinate box `L_s=MHD_BOXSIZE` (default 1),
+not an implicit unit inferred from a TSV filename. To convert coordinate
+length to comoving Mpc without h:
+
+$$
+u_L=\frac{10^{-3}L_h}{hL_s}\ {\rm cMpc},\qquad
+k_{\rm cMpc^{-1}}=k_{\rm input}/u_L,\qquad
+P_{\rm cMpc^3}=P_{\rm input}u_L^3.
+$$ {#eq-spectrum-units}
+
+Field-amplitude factors remain: magnetic/force/velocity spectra retain code
+amplitudes unless separately converted. For dimensionless density contrast,
+power has only coordinate-volume units.
+
+The estimator uses normalized Fourier amplitudes and `P=V*mean(|fhat|^2)`
+over occupied modes, summing vector components where applicable. The radial
+`k` value is the occupied-mode mean, not necessarily the geometric bin center.
+`mu=abs(k_axis)/|k|`; isotropic reductions weight each angular bin by `Nmodes`.
+
+$$
+\Delta^2(k)=\frac{k^3P(k)}{2\pi^2}.
+$$ {#eq-dimensionless-power}
+
+This combination is invariant under the coordinate-length conversion above.
+Keep empty bins as missing. State windowing, finite-volume/CIC effects, physical
+band limits, shell averaging, and any additional smoothing when comparing power.
+
+## Normalization and diagnostics {#sec-estimators}
+
+`Brms=sqrt(mean(Bx^2+By^2+Bz^2))`. Reference-band normalization and total-band
+normalization are different as described in [initial conditions](initial-conditions.qmd).
+`divBdx_over_brms` uses the centered-grid divergence and grid spacing divided
+by measured magnetic RMS. It is a numerical diagnostic, not a proof of exact
+continuum solenoidality.
+
+`delta_b_rms` and `delta_dm_rms` measure density contrasts; they are not raw
+density standard deviations in g/cm3. Density PDFs are volume-weighted per
+`log10(rho/reference density)`. Pressure/tension power requires a cross term,
+@eq-cross-spectrum. The photon energy ledger tracks resolved perturbation
+energy; algebraically eliminated higher-multipole heat is outside that ledger.
+
+## Phase comparisons {#sec-phase-convention}
+
+Keep signed complex amplitudes when comparing linear references. Sine and
+cosine ICs differ by phase; taking absolute values can hide a sign/clock error.
+A magnetic sine forcing produces quadratic `2k` terms; compare the observable's
+mode, not automatically the magnetic fundamental. Match cell centers,
+polarization, guide-field orientation, exact output epochs, and peculiar-velocity
+units before forming a relative error.

@@ -1,0 +1,26 @@
+name: Numerical or physical discrepancy
+description: A minimal, reproducible solver or physics discrepancy
+body:
+  - type: textarea
+    attributes:
+      label: Expected and observed result
+      description: State the field, epoch, units, normalization, and expected accuracy.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Reproducer
+      description: Paste the smallest TOML configuration and exact launch command.
+      render: toml
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Environment and evidence
+      description: Include revision/source hash, Julia version, backend/device, thread count, log excerpt, and diagnostic tables. Remove private paths if needed.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Refinement and controls
+      description: Results with smaller timesteps, a finer grid at fixed physical modes, CPU comparison, and relevant positivity/divergence/energy diagnostics.

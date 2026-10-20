@@ -1,0 +1,11 @@
+* text=auto
+*.tsv text eol=lf whitespace=cr-at-eol
+*.jl text eol=lf
+*.py text eol=lf
+*.qmd text eol=lf
+*.pdf binary
+*.png binary
+# Retain imported license text and captured execution logs verbatim.
+lib/**/LICENSE whitespace=-trailing-space
+test/python/fixtures/licenses/*.LICENSE whitespace=-trailing-space
+docs/data/*.log -whitespace

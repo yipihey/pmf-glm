@@ -1,0 +1,162 @@
+---
+title: "Initial conditions and matched modes"
+---
+
+## Specify a physical field {#sec-physical-specification}
+
+A reproducible amplitude statement is
+
+```text
+Bcom_rms(z_reference; kmin <= k <= kmax) = value
+normalization = total_band_rms | reference_band_rms
+window = declared cutoff function; seed = declared integer
+```
+
+A bare "3 pG PMF" leaves the epoch, bandwidth, normalization, and realization
+undefined. Direct initialization does not supply a pre-start transfer model:
+`MHD_PMF_NORMALIZATION_Z` must equal `MHD_ZSTART` unless a compatible pre-evolved
+state is supplied. Earlier physical normalization requires transferring density,
+velocity, magnetic fields, photons, and chemistry consistently to the handoff.
+{{< src "src/production/runner.jl" "pmf_normalization_z" >}}
+
+## Batchelor initializer {#sec-batchelor}
+
+The nonhelical Gaussian initializer constructs a random vector potential in
+Fourier space and forms
+
+$$
+\widehat{\mathbf B}(\mathbf k)=i\mathbf s(\mathbf k)\times\widehat{\mathbf A}(\mathbf k),
+\qquad s_j(k_j)=\frac{\sin(k_j\Delta x)}{\Delta x}.
+$$ {#eq-discrete-curl}
+
+The centered curl uses the same derivative symbol as the centered divergence
+diagnostic, giving `s dot B = 0` to roundoff. A continuum/spectral curl uses
+`s_j=k_j` instead and is not automatically divergence-free under the centered
+grid diagnostic. The low-k magnetic **shell energy** has Batchelor slope
+`E_B(k) proportional to k^4`; this is not a statement that the plotted
+three-dimensional per-mode `P_B(k)` also has slope four.
+{{< src "lib/MHDKernels/src/pmf.jl" "pmf_batchelor_field" >}}
+
+`kcut` controls a smooth cutoff; `kmax` is the hard band edge. With no explicit
+`kcut`, the raw runner scales it with grid Nyquist. That is useful for a
+grid-scale benchmark, **not** a fixed-physical-spectrum resolution experiment.
+
+## Lock phases and amplitudes {#sec-mode-locking}
+
+Keep the box, physical band, seed, window, normalization, realization algorithm,
+curl symbol, and lock grids fixed when refining:
+
+- `mode_lock_n` constructs the shared low-mode realization on a fixed grid.
+  The same seed without locking is insufficient when random-array traversal
+  changes with the simulation grid.
+- `curl_reference_n` fixes the centered derivative symbol used to generate
+  shared coefficients. It must not exceed the simulation grid.
+- `reference_kmax` and `reference_kcut` preserve the declared low band when
+  adding ultraviolet modes. `MHD_PMF_HIGH_MODE_LOCK_N` can separately lock the
+  high-band realization.
+- `mode_realization="physical_hash"` keys vector-potential coefficients by
+  physical Fourier indices. Shared, non-Nyquist modes in integer-related boxes
+  then retain phases and polarizations. `realization_box/box` must be a positive
+  integer for this construction.
+- `physical_hash_zero_phase` is a deliberately altered phase ensemble, not
+  another draw from the default random-phase ensemble. `fixed_mode_power`
+  changes amplitude statistics and must be reported too.
+
+Check actual Fourier coefficients in overlap bands; do not rely on matching
+configuration labels alone.
+{{< src "lib/MHDKernels/src/pmf.jl" "_physical_hash_vector_potential_k" >}}
+
+## Normalization and resolution {#sec-normalization}
+
+`total_band_rms` fixes the RMS over all generated modes. `reference_band_rms`
+fixes RMS only below the reference cutoff, permitting total RMS to increase
+when new UV modes are added. Renormalizing every extended band to the same
+total RMS changes the shared large-scale field.
+
+The initializer reports reference-band and total RMS separately. Record both.
+`PMFSpectrumSpec` and `pmf_multiband_manifest` provide a resolution-independent
+spectrum definition and minimum even grids for a set of band edges.
+{{< src "lib/MHDKernels/src/pmf.jl" "PMFSpectrumSpec" >}}
+{{< src "lib/MHDKernels/src/pmf.jl" "pmf_multiband_manifest" >}}
+
+For a hard cutoff, cells per shortest magnetic wavelength are
+
+$$
+n_\lambda=\frac{2\pi N}{k_{\max}L}.
+$$ {#eq-resolution}
+
+Specify `minimum_cells_per_wavelength` with `kmax` to make this a runtime
+requirement. A Nyquist mode always has two cells per wavelength, no matter how
+large the grid. Quadratic Maxwell stress reaches roughly twice the magnetic
+wavenumber, so resolving the magnetic wavelength alone does not establish
+force convergence. A useful first science matrix targets at least 32 cells
+per shortest B wavelength and 16 per shortest quadratic-force wavelength,
+then measures convergence. The shipped research example's looser cutoff is
+not a certificate that this criterion has been met.
+
+::: {.callout-tip}
+## Try it: compare grids without changing the physical problem
+Create two copies of `examples/pmf-recombination.toml`. Keep `kcut`, `kmax`,
+`mode_lock_n`, `curl_reference_n`, seed, band normalization, and physical box
+identical; double only `run.n`. Adjust Gaussian smoothing cells to preserve
+its physical length. Run to identical output redshifts and compare the
+initial spectra, occupied mode counts, and subsequent histories before
+interpreting the difference as a resolution error.
+:::
+
+## Analytic modes and phases {#sec-mode-phases}
+
+Mode ICs are cell-centered at `x_i=(i-1/2)/N`, with phase `2*pi*kmode*x_i`.
+The domain is periodic and `0 < kmode < N/2` for matched mode diagnostics.
+
+| IC | Magnetic components | What it tests |
+|---|---|---|
+| `forcefree` / `circular` | `By=b*sin(phase)`, `Bz=b*cos(phase)`, `Bx=0` | Constant magnetic pressure |
+| `sine` / `magpressure` | `By=b*sin(phase)`, other components zero | Quadratic density/force response at `2k` |
+| `alfven_linear` | `Bx=Bguide`, `By=Bpert*sin(phase)` | Small transverse guide-field perturbation |
+| `meanfield_linear` / `sv25_mode` | Oblique guide field; cosine in-plane or out-of-plane perturbation | Matched magnetosonic/Alfven reference comparisons |
+
+The sine-mode `amplitude` convention uses peak field, while `rms` rescales
+the non-force-free sine to its RMS. For a scalar sine wave, peak/RMS is
+`sqrt(2)`; the circular two-component mode already has constant magnitude.
+Report `MHD_PMF_SINGLE_MODE_NORMALIZATION` rather than silently converting.
+{{< src "src/production/runner.jl" "_init_single_b_k!" >}}
+{{< src "src/production/runner.jl" "_init_meanfield_linear_k!" >}}
+
+The default gas starts uniform and at rest; the lattice DM begins at uniform
+cell centers with zero peculiar velocity. These are controlled PMF forcing
+experiments, not a general primordial adiabatic matter realization. Photon
+adiabatic/comoving ICs and optional terminal momenta must be recorded. Changing
+start redshift changes the pre-start history even with the same PMF seed.
+
+## Importing a handoff {#sec-import-state}
+
+### Generate and inspect a magnetic realization
+
+```sh
+julia --project=. -t auto scripts/generate_ic.jl \
+  examples/cosmology-smoke.toml results/initial-field
+```
+
+This standalone **Batchelor magnetic-field** generator writes `bx.f32`,
+`by.f32`, `bz.f32`, and `ic.toml`, including field hashes, dimensions, byte
+order, normalization statistics, and source fingerprint. Arrays are Float32
+in Julia column-major order with x fastest, in MHD code magnetic units at the
+configured start redshift, not raw gauss or nG. It refuses a nonempty output
+directory. It does not pre-evolve gas, photons, particles, or chemistry.
+{{< src "scripts/generate_ic.jl" "magnetic_code_amplitude" >}}
+
+To use the exact field at the **same epoch and units**, configure
+`MHD_INITIAL_B_IMPORT_DIR` in `[environment]` with that directory. Regenerate
+after changing the normalization epoch. Magnetic-only import is not a full
+physical handoff and is not checkpoint resume. Use the separate Python
+matched-state generators for controlled linear guide-field handoffs.
+
+### Import a complete pre-evolved state
+
+`MHD_INITIAL_STATE_DIR` supports the driver's explicit state import path. Treat
+field names, dimensions, scalar type, storage convention, normalization epoch,
+and photon/chemistry payload as a single contract. Use the parser's actual
+schema rather than constructing an ad hoc file from a plot. State import is
+not the same operation as [checkpoint resume](outputs.qmd#sec-restart).
+{{< src "src/production/runner.jl" "initial_state_dir" >}}

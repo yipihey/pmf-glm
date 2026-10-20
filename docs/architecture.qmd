@@ -1,0 +1,88 @@
+---
+title: "Architecture and API map"
+---
+
+## Repository boundaries {#sec-repository-layout}
+
+```text
+Project.toml                 active-root dependencies and bundled [sources]
+src/PMFGLM.jl                public package facade
+src/configuration.jl         TOML validation and environment mapping
+src/provenance.jl            fingerprints, metadata, isolated run process
+src/production/runner.jl     extracted full coupled production driver
+lib/MHDKernels/              GLM MHD, PMF ICs, photon response, source coupling
+lib/PoissonKernels/          periodic gravity, particle mesh, transforms, spectra
+lib/ChemistryKernels/        primordial chemistry/recombination sources
+lib/EmissionKernels/         thermal/cooling coefficients
+scripts/                    bootstrap, launch, IC/suite generation, validation, benchmark
+environments/{metal,cuda}/   optional GPU active roots with local source mappings
+examples/                   small checks and editable research TOML
+tools/reference/            independent linear/hierarchy science tools
+tools/analysis/             history, spectrum, PDF, comparison analysis
+test/                       Julia regressions and Python reference/analysis tests
+provenance/                 source-extraction record
+docs/                       this Quarto book and supplied test evidence
+```
+
+The extracted production driver is large because it retains the complete
+coupled update, initialization choices, diagnostics, and restart contract.
+The facade makes that driver reproducible without requiring users to edit it.
+This is a single-node package, not Vespa's AMR/multi-code orchestration framework.
+
+## Public facade {#sec-api-map}
+
+| Entry point | Contract |
+|---|---|
+| `RunConfig(settings)` | Validate a configuration dictionary |
+| `load_config(path)` | Read and validate a TOML experiment |
+| `validate_config(config)` | Check named keys and structural constraints |
+| `run_environment(config; output_dir)` | Resolve named and low-level solver options |
+| `run_simulation(config; output_dir, dry_run=false)` | Launch a fresh process with metadata and controlled environment |
+| `source_fingerprint()` | Hash implementation sources/declarations independently of checkout location |
+| `backend`, `allocate_state`, `step!`, `evolve!`, `compute_dt` | Selected MHD operations |
+| `init_pmf_batchelor!`, `pmf_batchelor_field` | PMF initialization |
+| `fields_to_host`, `max_divb` | Host inspection and magnetic-divergence diagnostic |
+
+{{< src "src/PMFGLM.jl" "export RunConfig" >}}
+{{< src "src/provenance.jl" "function source_fingerprint" >}}
+
+The exported library modules expose additional APIs with Julia docstrings.
+Use Julia help, for example `?PMFGLM.MHDKernels.allocate_state`. The local
+source links in this book are checked snapshots, not a claim that an automatic
+Documenter-generated API reference exists.
+
+## Process and data flow {#sec-run-flow}
+
+1. The CLI reads TOML, applies a backend override, and requires an output path.
+2. The facade resolves options, rejects conflicting reuse/resume, records
+   configuration and source/dependency identity, and strips inherited `MHD_*`.
+3. A fresh Julia child process activates the same project and thread count;
+   backend extensions and transform plans are initialized there.
+4. The driver initializes/imports/restores the state and advances MHD,
+   photon response, chemistry, expansion, and gravity under the chosen controls.
+5. Small diagnostics return histories/spectra; optional frames/checkpoints add
+   larger host transfers. The parent records completion/failure and wall time.
+
+Fresh-process isolation matters because the driver has compile-time constants
+and backend caches. Running two `main()` calls after changing global environment
+variables in one Julia session is not the supported orchestration API.
+{{< src "scripts/run_pmf.jl" "function cli" >}}
+
+## Independent analysis boundary {#sec-analysis-boundary}
+
+The Python reference tools require NumPy, SciPy, and Matplotlib, not Julia or
+GPU bindings. They implement their own linear/hierarchy evolution and consume
+explicit data. Analysis scripts read production TSVs rather than requiring the
+simulation to be loaded into memory. This separation is deliberate: independent
+oracles can detect unit, clock, and phase errors hidden by same-code comparisons.
+
+Not every inherited comparison tool consumes the facade's run directory
+directly: some require upstream-style `manifest.json`, `summary.tsv`, a table,
+or a controlled-linear-run contract. Read `tools/README.md` and each command's
+help. Do not synthesize missing manifests to imply a nonlinear run passed a
+linear-only validation gate.
+
+`pmf-compare-nonlinear` is the native end-to-end entry point. It constructs the
+handoff and resolved configuration, executes the standalone production process,
+and consumes its real metadata and mode tables directly. Use that workflow
+instead of adapting an inherited campaign manifest by hand.

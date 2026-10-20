@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "Please cite this software and the physical and numerical methods described in its documentation."
+title: "PMFGLM.jl: Single-node primordial magnetic field simulations"
+type: software
+authors:
+  - family-names: Abel
+    given-names: Tom
+repository-code: "https://github.com/yipihey/pmf-glm"
+url: "https://yipihey.github.io/pmf-glm/"
+version: 0.1.0
+license: BSD-3-Clause

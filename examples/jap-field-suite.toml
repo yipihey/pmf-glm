@@ -1,0 +1,19 @@
+# One physical box and identical random phases; amplitude varies in comoving nG.
+# 0.001, 0.003, 0.01 nG are 1, 3, 10 pG, respectively.
+base_config = "pmf-recombination.toml"
+output_dir = "../runs/jap-fields"
+
+[[cases]]
+label = "B1pG-N128"
+[cases.magnetic]
+b0_ng = 0.001
+
+[[cases]]
+label = "B3pG-N128"
+[cases.magnetic]
+b0_ng = 0.003
+
+[[cases]]
+label = "B10pG-N128"
+[cases.magnetic]
+b0_ng = 0.01

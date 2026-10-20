@@ -1,0 +1,445 @@
+# particle_push — KA port of Enzo's particle gravity interpolation + leapfrog
+# drift/kick (the per-cycle `session_update_particles` work), device-agnostic.
+#
+# Enzo splits the per-particle gravity update across two routines that this file
+# reproduces bit-for-bit (the `b8` f64 build is the oracle):
+#
+#   Grid::ComputeAccelerations   (src/enzo/Grid_ComputeAccelerations.C)
+#     · difference φ → AccelerationField   (comp_accel!, iflag=0, cell-centred)
+#     · drift particles +½dt forward  (UpdateParticlePosition(+0.5 dtFixed))
+#     · CIC-interpolate the field onto each particle  (cic_interp.F, 8-point)
+#     · drift particles −½dt back      (exactly reversible — same |coef|)
+#   UpdateParticlePositions      (src/enzo/UpdateParticlePositions.C)
+#     · half-kick(½dt) → drift(dt) → half-kick(½dt)            [leapfrog]
+#
+# We never mutate the stored position for the interpolation half-drift: the
+# interp kernel evaluates the field at  x + dcoef·v  inline (dcoef = ½dt/a at the
+# interp time), which is identical to drift-forward / interp / drift-back.
+#
+# Cosmology coefficients (a, ȧ) come from Enzo's own CosmologyComputeExpansionFactor
+# via `EnzoLib.session_expansion_factor` so the comoving factors match to round-off:
+#   · interp half-drift   dcoef = ½·dt / a(t+¼dt)
+#   · main drift          coef  =   dt / a(t+½dt)
+#   · semi-implicit kick  ts = ½dt,  coef = ½·(ȧ/a)·ts  with a,ȧ at t+½dt
+#     v ← ((1−coef)·v + g·ts) / (1+coef)        (g = ParticleAcceleration, already /a)
+#
+# Particle layout is the SoA used by `cic_deposit!` (px,py,pz,vx,vy,vz device
+# vectors, one thread per particle). The acceleration grids gx,gy,gz are 3-D
+# device arrays on the Enzo *grid* mesh (GridDimension, NG ghost zones); the
+# interp geometry is passed explicitly: cellsize = dx, leftedge = CellLeftEdge[0]
+# (the leftmost ghost edge, e.g. −NG·dx for a unit periodic box).
+
+# ── CIC interpolation of the three accel grids onto particles ─────────────────
+# No `where {T}` on the @kernel (would box type params → Metal InvalidIR); the
+# element type flows in via the array args, scalars converted by the launcher.
+@kernel function _interp_accel_kernel!(axp, ayp, azp,
+                                       @Const(px), @Const(py), @Const(pz),
+                                       @Const(vx), @Const(vy), @Const(vz),
+                                       @Const(gx), @Const(gy), @Const(gz),
+                                       dcoef, invcell, lex, ley, lez,
+                                       half, c05, c1, e1, e2, e3)
+    p = @index(Global)
+    @inbounds begin
+        # interpolate at the +½dt forward-drifted position (cancels on the way back)
+        xq = px[p] + dcoef * vx[p]
+        yq = py[p] + dcoef * vy[p]
+        zq = pz[p] + dcoef * vz[p]
+        # cell-coordinate, clamped exactly as cic_interp.F (clamp uses half = 0.5001)
+        xpos = min(max((xq - lex) * invcell, half), e1)
+        ypos = min(max((yq - ley) * invcell, half), e2)
+        zpos = min(max((zq - lez) * invcell, half), e3)
+        # index + weight use plain 0.5 (RKIND), NOT 0.5001
+        i1 = unsafe_trunc(Int, xpos + c05)
+        j1 = unsafe_trunc(Int, ypos + c05)
+        k1 = unsafe_trunc(Int, zpos + c05)
+        dxr = oftype(xpos, i1) + c05 - xpos
+        dyr = oftype(ypos, j1) + c05 - ypos
+        dzr = oftype(zpos, k1) + c05 - zpos
+        ex = c1 - dxr; ey = c1 - dyr; ez = c1 - dzr
+        # 8-point trilinear (cic_interp.F:158-174)
+        axp[p] = gx[i1  , j1  , k1  ] * dxr * dyr * dzr +
+                 gx[i1+1, j1  , k1  ] * ex  * dyr * dzr +
+                 gx[i1  , j1+1, k1  ] * dxr * ey  * dzr +
+                 gx[i1+1, j1+1, k1  ] * ex  * ey  * dzr +
+                 gx[i1  , j1  , k1+1] * dxr * dyr * ez  +
+                 gx[i1+1, j1  , k1+1] * ex  * dyr * ez  +
+                 gx[i1  , j1+1, k1+1] * dxr * ey  * ez  +
+                 gx[i1+1, j1+1, k1+1] * ex  * ey  * ez
+        ayp[p] = gy[i1  , j1  , k1  ] * dxr * dyr * dzr +
+                 gy[i1+1, j1  , k1  ] * ex  * dyr * dzr +
+                 gy[i1  , j1+1, k1  ] * dxr * ey  * dzr +
+                 gy[i1+1, j1+1, k1  ] * ex  * ey  * dzr +
+                 gy[i1  , j1  , k1+1] * dxr * dyr * ez  +
+                 gy[i1+1, j1  , k1+1] * ex  * dyr * ez  +
+                 gy[i1  , j1+1, k1+1] * dxr * ey  * ez  +
+                 gy[i1+1, j1+1, k1+1] * ex  * ey  * ez
+        azp[p] = gz[i1  , j1  , k1  ] * dxr * dyr * dzr +
+                 gz[i1+1, j1  , k1  ] * ex  * dyr * dzr +
+                 gz[i1  , j1+1, k1  ] * dxr * ey  * dzr +
+                 gz[i1+1, j1+1, k1  ] * ex  * ey  * dzr +
+                 gz[i1  , j1  , k1+1] * dxr * dyr * ez  +
+                 gz[i1+1, j1  , k1+1] * ex  * dyr * ez  +
+                 gz[i1  , j1+1, k1+1] * dxr * ey  * ez  +
+                 gz[i1+1, j1+1, k1+1] * ex  * ey  * ez
+    end
+end
+
+"""
+    interp_accel_to_particles!(axp,ayp,azp, px,py,pz, vx,vy,vz, gx,gy,gz;
+                               dcoef, cellsize, leftedge) -> (axp,ayp,azp)
+
+CIC-interpolate the three acceleration grids `gx,gy,gz` (3-D device arrays on the
+Enzo grid mesh) onto each particle, writing the per-particle accelerations
+`axp,ayp,azp` (device vectors). The field is evaluated at the half-step
+forward-drifted position `x + dcoef·v` (`dcoef = ½·dt/a` at the interpolation
+time) — Enzo's `Grid::ComputeAccelerations` drift-forward/interp/drift-back, done
+without mutating the stored positions. `cellsize` is the grid cell width and
+`leftedge = (lex,ley,lez)` is `CellLeftEdge[·][0]` (the leftmost ghost edge).
+Mirrors `cic_interp.F` (8-point, `half = 0.5001`).
+"""
+function interp_accel_to_particles!(axp::AbstractVector{T}, ayp, azp,
+                                    px, py, pz, vx, vy, vz,
+                                    gx::AbstractArray{<:Any,3}, gy, gz;
+                                    dcoef::Real, cellsize::Real,
+                                    leftedge) where {T}
+    be = KA.get_backend(axp)
+    d1, d2, d3 = size(gx)
+    half = T(0.5001)
+    e1 = T(d1) - half; e2 = T(d2) - half; e3 = T(d3) - half
+    _interp_accel_kernel!(be)(axp, ayp, azp, px, py, pz, vx, vy, vz,
+                              gx, gy, gz,
+                              T(dcoef), T(1) / T(cellsize),
+                              T(leftedge[1]), T(leftedge[2]), T(leftedge[3]),
+                              half, T(0.5), T(1), e1, e2, e3; ndrange = length(axp))
+    return axp, ayp, azp
+end
+
+# ── CIC force interp straight from the POTENTIAL (no stored accel field) ──────
+# Same difference-then-interpolate as _interp_accel_kernel! (so momentum-conserving,
+# self-force-free), but g = −∇φ is central-differenced inline at each of the 8 CIC cells
+# from the padded potential `φ` — needs ≥2 ghost cells so cell±1 is in bounds for all 8.
+@kernel function _interp_force_phi_kernel!(axp, ayp, azp,
+                                           @Const(px), @Const(py), @Const(pz),
+                                           @Const(vx), @Const(vy), @Const(vz), @Const(φ),
+                                           dcoef, invcell, lex, ley, lez,
+                                           half, c05, c1, e1, e2, e3, hc)
+    p = @index(Global)
+    @inbounds begin
+        xq = px[p] + dcoef*vx[p]; yq = py[p] + dcoef*vy[p]; zq = pz[p] + dcoef*vz[p]
+        xpos = min(max((xq-lex)*invcell, half), e1)
+        ypos = min(max((yq-ley)*invcell, half), e2)
+        zpos = min(max((zq-lez)*invcell, half), e3)
+        i1 = unsafe_trunc(Int, xpos+c05); j1 = unsafe_trunc(Int, ypos+c05); k1 = unsafe_trunc(Int, zpos+c05)
+        dxr = oftype(xpos,i1)+c05-xpos; dyr = oftype(ypos,j1)+c05-ypos; dzr = oftype(zpos,k1)+c05-zpos
+        ex = c1-dxr; ey = c1-dyr; ez = c1-dzr
+        gxc(i,j,k) = -hc*(φ[i+1,j,k]-φ[i-1,j,k])
+        gyc(i,j,k) = -hc*(φ[i,j+1,k]-φ[i,j-1,k])
+        gzc(i,j,k) = -hc*(φ[i,j,k+1]-φ[i,j,k-1])
+        w(a,b,c) = a*b*c
+        axp[p] = gxc(i1,j1,k1)*w(dxr,dyr,dzr)+gxc(i1+1,j1,k1)*w(ex,dyr,dzr)+gxc(i1,j1+1,k1)*w(dxr,ey,dzr)+gxc(i1+1,j1+1,k1)*w(ex,ey,dzr)+
+                 gxc(i1,j1,k1+1)*w(dxr,dyr,ez)+gxc(i1+1,j1,k1+1)*w(ex,dyr,ez)+gxc(i1,j1+1,k1+1)*w(dxr,ey,ez)+gxc(i1+1,j1+1,k1+1)*w(ex,ey,ez)
+        ayp[p] = gyc(i1,j1,k1)*w(dxr,dyr,dzr)+gyc(i1+1,j1,k1)*w(ex,dyr,dzr)+gyc(i1,j1+1,k1)*w(dxr,ey,dzr)+gyc(i1+1,j1+1,k1)*w(ex,ey,dzr)+
+                 gyc(i1,j1,k1+1)*w(dxr,dyr,ez)+gyc(i1+1,j1,k1+1)*w(ex,dyr,ez)+gyc(i1,j1+1,k1+1)*w(dxr,ey,ez)+gyc(i1+1,j1+1,k1+1)*w(ex,ey,ez)
+        azp[p] = gzc(i1,j1,k1)*w(dxr,dyr,dzr)+gzc(i1+1,j1,k1)*w(ex,dyr,dzr)+gzc(i1,j1+1,k1)*w(dxr,ey,dzr)+gzc(i1+1,j1+1,k1)*w(ex,ey,dzr)+
+                 gzc(i1,j1,k1+1)*w(dxr,dyr,ez)+gzc(i1+1,j1,k1+1)*w(ex,dyr,ez)+gzc(i1,j1+1,k1+1)*w(dxr,ey,ez)+gzc(i1+1,j1+1,k1+1)*w(ex,ey,ez)
+    end
+end
+
+"""
+    interp_force_from_potential!(axp,ayp,azp, px,py,pz, vx,vy,vz, φ;
+                                 dcoef, cellsize, leftedge) -> (axp,ayp,azp)
+
+Like [`interp_accel_to_particles!`], but reads the padded **potential** `φ` and forms
+`g = −∇φ` (central difference) inline at the 8 CIC cells — no precomputed accel grids.
+`cellsize = dx` and the central-difference uses the same `1/(2dx)`; `φ` must carry ≥2
+ghost cells.  Mathematically identical (difference-then-interpolate) to the stored-accel path.
+"""
+function interp_force_from_potential!(axp::AbstractVector{T}, ayp, azp,
+                                      px, py, pz, vx, vy, vz, φ::AbstractArray{<:Any,3};
+                                      dcoef::Real, cellsize::Real, leftedge) where {T}
+    be = KA.get_backend(axp); d1,d2,d3 = size(φ)
+    half = T(0.5001); e1 = T(d1)-half; e2 = T(d2)-half; e3 = T(d3)-half
+    _interp_force_phi_kernel!(be)(axp, ayp, azp, px, py, pz, vx, vy, vz, φ,
+                                  T(dcoef), T(1)/T(cellsize), T(leftedge[1]), T(leftedge[2]), T(leftedge[3]),
+                                  half, T(0.5), T(1), e1, e2, e3, T(0.5)/T(cellsize); ndrange = length(axp))
+    return axp, ayp, azp
+end
+# ── Ghost-FREE force interp: read the GLOBAL nc³ potential φg (no pad) with periodic index ────
+# wrap, so the per-solve padded-φ copy is unnecessary.  BIT-IDENTICAL to interp_force_from_potential!
+# on a periodically-padded φ: the pad offset cancels in the CIC weights and the ghost fill IS this
+# same periodic wrap.  The half-drift excursion stays within a cell, so wrapping the ±1 stencil
+# indices (range i1−1 … i1+2) covers every access for particles anywhere in [0,1).
+# Stencil indices are only one cell outside the periodic domain in this path.
+# Avoiding `mod` here is the point of the one-buffer particle fast path.
+@inline _wrap_near1(i::Int, n::Int) = ifelse(i < 1, i + n, ifelse(i > n, i - n, i))
+
+@inline function _global_phi_force(phi, i1::Int, j1::Int, k1::Int,
+                                   dxr, dyr, dzr, ex, ey, ez,
+                                   n1::Int, n2::Int, n3::Int, hc)
+    im = _wrap_near1(i1 - 1, n1)
+    i0 = _wrap_near1(i1,     n1)
+    ip = _wrap_near1(i1 + 1, n1)
+    i2 = _wrap_near1(i1 + 2, n1)
+
+    jm = _wrap_near1(j1 - 1, n2)
+    j0 = _wrap_near1(j1,     n2)
+    jp = _wrap_near1(j1 + 1, n2)
+    j2 = _wrap_near1(j1 + 2, n2)
+
+    km = _wrap_near1(k1 - 1, n3)
+    k0 = _wrap_near1(k1,     n3)
+    kp = _wrap_near1(k1 + 1, n3)
+    k2 = _wrap_near1(k1 + 2, n3)
+
+    sj = n1
+    sk = n1 * n2
+    oj0k0 = (j0 - 1) * sj + (k0 - 1) * sk
+    ojpk0 = (jp - 1) * sj + (k0 - 1) * sk
+    oj0kp = (j0 - 1) * sj + (kp - 1) * sk
+    ojpkp = (jp - 1) * sj + (kp - 1) * sk
+
+    ojmk0 = (jm - 1) * sj + (k0 - 1) * sk
+    oj2k0 = (j2 - 1) * sj + (k0 - 1) * sk
+    ojmkp = (jm - 1) * sj + (kp - 1) * sk
+    oj2kp = (j2 - 1) * sj + (kp - 1) * sk
+
+    oj0km = (j0 - 1) * sj + (km - 1) * sk
+    ojpkm = (jp - 1) * sj + (km - 1) * sk
+    oj0k2 = (j0 - 1) * sj + (k2 - 1) * sk
+    ojpk2 = (jp - 1) * sj + (k2 - 1) * sk
+
+    w000 = dxr * dyr * dzr
+    w100 = ex  * dyr * dzr
+    w010 = dxr * ey  * dzr
+    w110 = ex  * ey  * dzr
+    w001 = dxr * dyr * ez
+    w101 = ex  * dyr * ez
+    w011 = dxr * ey  * ez
+    w111 = ex  * ey  * ez
+
+    @inbounds begin
+        gx000 = -hc * (phi[ip + oj0k0] - phi[im + oj0k0])
+        gx100 = -hc * (phi[i2 + oj0k0] - phi[i0 + oj0k0])
+        gx010 = -hc * (phi[ip + ojpk0] - phi[im + ojpk0])
+        gx110 = -hc * (phi[i2 + ojpk0] - phi[i0 + ojpk0])
+        gx001 = -hc * (phi[ip + oj0kp] - phi[im + oj0kp])
+        gx101 = -hc * (phi[i2 + oj0kp] - phi[i0 + oj0kp])
+        gx011 = -hc * (phi[ip + ojpkp] - phi[im + ojpkp])
+        gx111 = -hc * (phi[i2 + ojpkp] - phi[i0 + ojpkp])
+
+        gy000 = -hc * (phi[i0 + ojpk0] - phi[i0 + ojmk0])
+        gy100 = -hc * (phi[ip + ojpk0] - phi[ip + ojmk0])
+        gy010 = -hc * (phi[i0 + oj2k0] - phi[i0 + oj0k0])
+        gy110 = -hc * (phi[ip + oj2k0] - phi[ip + oj0k0])
+        gy001 = -hc * (phi[i0 + ojpkp] - phi[i0 + ojmkp])
+        gy101 = -hc * (phi[ip + ojpkp] - phi[ip + ojmkp])
+        gy011 = -hc * (phi[i0 + oj2kp] - phi[i0 + oj0kp])
+        gy111 = -hc * (phi[ip + oj2kp] - phi[ip + oj0kp])
+
+        gz000 = -hc * (phi[i0 + oj0kp] - phi[i0 + oj0km])
+        gz100 = -hc * (phi[ip + oj0kp] - phi[ip + oj0km])
+        gz010 = -hc * (phi[i0 + ojpkp] - phi[i0 + ojpkm])
+        gz110 = -hc * (phi[ip + ojpkp] - phi[ip + ojpkm])
+        gz001 = -hc * (phi[i0 + oj0k2] - phi[i0 + oj0k0])
+        gz101 = -hc * (phi[ip + oj0k2] - phi[ip + oj0k0])
+        gz011 = -hc * (phi[i0 + ojpk2] - phi[i0 + ojpk0])
+        gz111 = -hc * (phi[ip + ojpk2] - phi[ip + ojpk0])
+    end
+
+    ax = gx000 * w000 + gx100 * w100 + gx010 * w010 + gx110 * w110 +
+         gx001 * w001 + gx101 * w101 + gx011 * w011 + gx111 * w111
+    ay = gy000 * w000 + gy100 * w100 + gy010 * w010 + gy110 * w110 +
+         gy001 * w001 + gy101 * w101 + gy011 * w011 + gy111 * w111
+    az = gz000 * w000 + gz100 * w100 + gz010 * w010 + gz110 * w110 +
+         gz001 * w001 + gz101 * w101 + gz011 * w011 + gz111 * w111
+    return ax, ay, az
+end
+
+@kernel function _interp_force_global_phi_kernel!(axp, ayp, azp,
+                                                  @Const(px), @Const(py), @Const(pz),
+                                                  @Const(vx), @Const(vy), @Const(vz), @Const(φg),
+                                                  dcoef, invcell, c05, c1, n1::Int, n2::Int, n3::Int, hc)
+    p = @index(Global)
+    @inbounds begin
+        xq = px[p] + dcoef*vx[p]; yq = py[p] + dcoef*vy[p]; zq = pz[p] + dcoef*vz[p]
+        xpos = xq*invcell; ypos = yq*invcell; zpos = zq*invcell        # cell units, leftedge 0 (pad cancels)
+        i1 = unsafe_trunc(Int, xpos+c05); j1 = unsafe_trunc(Int, ypos+c05); k1 = unsafe_trunc(Int, zpos+c05)
+        dxr = oftype(xpos,i1)+c05-xpos; dyr = oftype(ypos,j1)+c05-ypos; dzr = oftype(zpos,k1)+c05-zpos
+        ex = c1-dxr; ey = c1-dyr; ez = c1-dzr
+        ax, ay, az = _global_phi_force(φg, i1, j1, k1, dxr, dyr, dzr, ex, ey, ez, n1, n2, n3, hc)
+        axp[p] = ax
+        ayp[p] = ay
+        azp[p] = az
+    end
+end
+
+"""
+    interp_force_from_global_potential!(axp,ayp,azp, px,py,pz, vx,vy,vz, φg; dcoef, nc) -> (axp,ayp,azp)
+
+Like [`interp_force_from_potential!`] but reads the GLOBAL `nc³` potential `φg` (no pad/ghosts) with
+periodic index wrap — no per-solve padded-φ copy.  Bit-identical to the padded path for particles in
+`[0,1)` (the pad offset cancels; the ghost fill is the same wrap).  `nc` is the cubic global dim.
+"""
+function interp_force_from_global_potential!(axp::AbstractVector{T}, ayp, azp,
+                                             px, py, pz, vx, vy, vz, φg::AbstractArray{<:Any,3};
+                                             dcoef::Real, nc) where {T}
+    be = KA.get_backend(axp); n1, n2, n3 = Int(nc[1]), Int(nc[2]), Int(nc[3])
+    _interp_force_global_phi_kernel!(be)(axp, ayp, azp, px, py, pz, vx, vy, vz, φg,
+                                         T(dcoef), T(n1), T(0.5), T(1), n1, n2, n3, T(0.5)*T(n1);
+                                         ndrange = length(axp))
+    return axp, ayp, azp
+end
+
+# ── FUSED force-interp + leapfrog KDK (no per-particle accel array) ───────────────────────────
+# The force is evaluated ONCE (at the half-drifted position) and held in REGISTERS across both
+# half-kicks — so `axp,ayp,azp` (3·Nₚ) never materialize.  Global φ, periodic-wrap CIC (as
+# interp_force_from_global_potential!); non-comoving kick (coef=0).  The half-kick
+# is rounded to the stored velocity type before the drift, matching the split
+# kick-drift-kick path exactly even for f16-stored velocities.
+@kernel function _push_kdk_global_k!(px, py, pz, vx, vy, vz, @Const(φg),
+                                     dcoef, ts, driftcoef, wrap, dowrap::Int,
+                                     invcell, c05, c1,
+                                     n1::Int, n2::Int, n3::Int, hc)
+    p = @index(Global)
+    @inbounds begin
+        xq = px[p] + dcoef * vx[p]
+        yq = py[p] + dcoef * vy[p]
+        zq = pz[p] + dcoef * vz[p]
+        xpos = xq * invcell
+        ypos = yq * invcell
+        zpos = zq * invcell
+        i1 = unsafe_trunc(Int, xpos + c05)
+        j1 = unsafe_trunc(Int, ypos + c05)
+        k1 = unsafe_trunc(Int, zpos + c05)
+        dxr = oftype(xpos, i1) + c05 - xpos
+        dyr = oftype(ypos, j1) + c05 - ypos
+        dzr = oftype(zpos, k1) + c05 - zpos
+        ex = c1 - dxr; ey = c1 - dyr; ez = c1 - dzr
+        ax, ay, az = _global_phi_force(φg, i1, j1, k1, dxr, dyr, dzr, ex, ey, ez, n1, n2, n3, hc)
+
+        Tv = eltype(vx)
+        nvx = Tv(vx[p] + ax * ts)
+        nvy = Tv(vy[p] + ay * ts)
+        nvz = Tv(vz[p] + az * ts)
+
+        x = px[p] + driftcoef * nvx
+        y = py[p] + driftcoef * nvy
+        z = pz[p] + driftcoef * nvz
+        if dowrap == 1
+            x = mod(x, wrap); y = mod(y, wrap); z = mod(z, wrap)
+        end
+        px[p] = x; py[p] = y; pz[p] = z
+
+        vx[p] = Tv(nvx + ax * ts)
+        vy[p] = Tv(nvy + ay * ts)
+        vz[p] = Tv(nvz + az * ts)
+    end
+end
+
+"""
+    particle_kdk_from_global_potential!(px,py,pz, vx,vy,vz, φg; dcoef, ts, driftcoef, nc, wrap=1)
+
+Fused KDK particle update reading the global periodic potential directly. It is
+equivalent to force interpolation from [`interp_force_from_global_potential!`](@ref),
+one kick, drift with optional periodic wrap, and the second kick, but avoids the
+three per-particle acceleration scratch vectors.
+"""
+function particle_kdk_from_global_potential!(px::AbstractVector{T}, py, pz, vx, vy, vz,
+                                             φg::AbstractArray{<:Any,3};
+                                             dcoef::Real, ts::Real, driftcoef::Real,
+                                             nc, wrap::Real=1) where {T}
+    be = KA.get_backend(px)
+    n1, n2, n3 = Int(nc[1]), Int(nc[2]), Int(nc[3])
+    dowrap = wrap > 0 ? 1 : 0
+    _push_kdk_global_k!(be)(px, py, pz, vx, vy, vz, φg,
+                            T(dcoef), T(ts), T(driftcoef), T(wrap), dowrap,
+                            T(n1), T(0.5), T(1),
+                            n1, n2, n3, T(0.5) * T(n1);
+                            ndrange = length(px))
+    return px, py, pz, vx, vy, vz
+end
+
+"""
+    push_particles_fused_global!(px,py,pz, vx,vy,vz, φg; dtau, nc) -> nothing
+
+One-kernel leapfrog step reading the GLOBAL `nc³` potential `φg` (periodic wrap): eval `g=−∇φ` at the
+half-drifted position, kick–drift–kick, wrap — the per-particle accel stays in registers (no `axp`
+arrays).  Non-comoving (`coef=0`).  Bit-identical to the split interp+kick+drift+kick global path.
+"""
+function push_particles_fused_global!(px::AbstractVector{T}, py, pz, vx, vy, vz, φg;
+                                      dtau::Real, nc, wrap::Real=1) where {T}
+    half = T(0.5) * T(dtau)
+    particle_kdk_from_global_potential!(px, py, pz, vx, vy, vz, φg;
+        dcoef=half, ts=half, driftcoef=T(dtau), nc=nc, wrap=wrap)
+    return nothing
+end
+
+@kernel function _kick_kernel!(vx, vy, vz, @Const(axp), @Const(ayp), @Const(azp),
+                               ts, coef1, coef2)
+    p = @index(Global)
+    @inbounds begin
+        # coef1/ts/coef2 arrive in the compute type (≥Float32); f16-stored v[p] promotes
+        # into the mul/add, so the update runs in f32 and only the store is low-precision.
+        Tv = eltype(vx)
+        vx[p] = Tv((coef1 * vx[p] + axp[p] * ts) * coef2)
+        vy[p] = Tv((coef1 * vy[p] + ayp[p] * ts) * coef2)
+        vz[p] = Tv((coef1 * vz[p] + azp[p] * ts) * coef2)
+    end
+end
+
+"""
+    particle_kick!(vx,vy,vz, axp,ayp,azp; ts, coef) -> (vx,vy,vz)
+
+Semi-implicit comoving velocity half-kick (Enzo VELOCITY_METHOD3):
+`v ← ((1−coef)·v + g·ts) / (1+coef)`, with `ts = ½dt` the accel timestep and
+`coef = ½·(ȧ/a)·ts` (a,ȧ at `t+½dt`). The per-particle acceleration `g` is the
+output of [`interp_accel_to_particles!`] (already divided by `a`). Called twice
+per cycle, once on each side of the drift. With `coef = 0` this is the plain
+`v += g·ts` non-comoving kick.
+"""
+function particle_kick!(vx::AbstractVector, vy, vz, axp, ayp, azp;
+                        ts::Real, coef::Real)
+    be = KA.get_backend(vx)
+    # Compute in ≥Float32 so f16-STORED velocities keep the kick — only the between-step
+    # storage is low precision, the update math is promoted.  For f32/f64 velocities
+    # C == eltype(vx) and this is bit-identical to the old eltype(vx) coefficients.
+    C = promote_type(eltype(vx), eltype(axp), Float32)
+    c = C(coef)
+    _kick_kernel!(be)(vx, vy, vz, axp, ayp, azp,
+                      C(ts), one(C) - c, one(C) / (one(C) + c);
+                      ndrange = length(vx))
+    return vx, vy, vz
+end
+
+# ── comoving drift (Grid_UpdateParticlePosition.C) ────────────────────────────
+@kernel function _drift_kernel!(px, py, pz, @Const(vx), @Const(vy), @Const(vz),
+                                coef, wrap, dowrap::Int)
+    p = @index(Global)
+    @inbounds begin
+        x = px[p] + coef * vx[p]
+        y = py[p] + coef * vy[p]
+        z = pz[p] + coef * vz[p]
+        if dowrap == 1
+            x = mod(x, wrap); y = mod(y, wrap); z = mod(z, wrap)
+        end
+        px[p] = x; py[p] = y; pz[p] = z
+    end
+end
+
+"""
+    particle_drift!(px,py,pz, vx,vy,vz; coef, wrap=0) -> (px,py,pz)
+
+Drift positions `x ← x + coef·v` (`coef = dt/a` at `t+½dt`, Enzo
+`UpdateParticlePosition`). `wrap > 0` additionally wraps each coordinate into
+`[0,wrap)` — physically identical under periodicity and needed in the resident
+loop to keep f32 positions from drifting many box-lengths over a long run; leave
+`wrap = 0` (no wrap) to match a single Enzo update bit-for-bit.
+"""
+function particle_drift!(px::AbstractVector{T}, py, pz, vx, vy, vz;
+                         coef::Real, wrap::Real = 0) where {T}
+    be = KA.get_backend(px)
+    dowrap = wrap > 0 ? 1 : 0
+    _drift_kernel!(be)(px, py, pz, vx, vy, vz, T(coef), T(wrap), dowrap;
+                       ndrange = length(px))
+    return px, py, pz
+end

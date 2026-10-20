@@ -1,0 +1,21 @@
+# A short, noncosmological end-to-end MHD + particle-gravity check.
+[run]
+n = 16
+backend = "cpu"
+steps = 4
+cfl = 0.2
+reconstruction = "plm"
+
+[magnetic]
+brms_code = 0.001
+seed = 42
+kcut = 12.566370614359172
+kmax = 12.566370614359172
+
+[physics]
+gravity = true
+
+[diagnostics]
+every = 2
+angle_bins = 1
+spectrum_bins = 8

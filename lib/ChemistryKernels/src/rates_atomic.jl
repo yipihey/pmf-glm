@@ -1,0 +1,118 @@
+# rates_atomic.jl — precision-generic atomic H/He reaction-rate kernels.
+#
+# Each function is a pure scalar formula of temperature T [K], returning the
+# reaction rate coefficient in CGS (cm³/s), as given by the Abel/Anninos et al.
+# 1997 network with Case-B recombination.
+#
+# All functions run as real device kernels via @scalarkernel (CPU f64/f32 +
+# Metal f32).  k1/k3/k5 are degree-8 exp(poly(logTev)) Abel-1997 fits whose f32
+# evaluation cancels only at T > ~1e8 K (outside the primordial regime); the
+# verification ladder checks the f32 layers over T ≤ 1e8 K accordingly.
+#
+# Rules throughout: R = typeof(T); every numeric literal in R(...); fractional
+# exponents in R(...) (e.g. T^R(-1.5)); coefficients taken from the primary
+# fits cited per rate below (Abel et al. 1997; Anninos et al. 1997).
+
+# ── k1 : HI + e → HII + 2e ───────────────────────────────────────────────────
+# Fit: Abel et al. (1997), degree-8 exp(poly(logTev)).
+# Evaluate the fit through its Boltzmann-suppressed tail.  The historical
+# max(1e-20, fit) below 0.8 eV was a numerical sentinel, not physics: it made
+# cold neutral gas retain a finite collisional-ionisation source.  The
+# exponential fit is monotone there and naturally underflows to exact zero.
+@inline function k1(T::Real)
+    R = typeof(T)
+    T > zero(R) || return zero(R)
+    Tev = T / R(11605.0)
+    return @fastmath begin
+        x = log(Tev)
+        exp(evalpoly(x, (R(-32.71396786375), R(13.53655609057), R(-5.739328757388),
+              R(1.563154982022), R(-0.2877056004391), R(0.03482559773736999),
+              R(-0.00263197617559), R(0.0001119543953861), R(-2.039149852002e-6))))
+    end
+end
+@scalarkernel k1
+
+# ── k3 : HeI + e → HeII + 2e ─────────────────────────────────────────────────
+# Fit: Abel et al. (1997), degree-8 exp(poly(logTev)).
+# No artificial low-T floor; see k1.
+@inline function k3(T::Real)
+    R = typeof(T)
+    T > zero(R) || return zero(R)
+    Tev = T / R(11605.0)
+    return @fastmath begin
+        x = log(Tev)
+        exp(evalpoly(x, (R(-44.09864886561001), R(23.91596563469), R(-10.75323019821),
+               R(3.058038757198), R(-0.5685118909884001), R(0.06795391233790001),
+               R(-0.005009056101857001), R(0.0002067236157507), R(-3.649161410833e-6))))
+    end
+end
+@scalarkernel k3
+
+# ── k5 : HeII + e → HeIII + 2e ───────────────────────────────────────────────
+# Fit: Abel et al. (1997), degree-8 exp(poly(logTev)).
+# No artificial low-T floor; see k1.
+@inline function k5(T::Real)
+    R = typeof(T)
+    T > zero(R) || return zero(R)
+    Tev = T / R(11605.0)
+    return @fastmath begin
+        x = log(Tev)
+        exp(evalpoly(x, (R(-68.71040990212001), R(43.93347632635), R(-18.48066993568),
+               R(4.701626486759002), R(-0.7692466334492), R(0.08113042097303),
+               R(-0.005324020628287001), R(0.0001975705312221), R(-3.165581065665e-6))))
+    end
+end
+@scalarkernel k5
+
+# ── k2 : HII + e → HI + photon  (CaseB recombination) ───────────────────────
+# Fit: Hui & Gnedin (1997) CaseB. Power-law: f32 accurate to ~5e-7 everywhere.
+# Note: the rate is conventionally floored to tiny for T≥1e9, but evaluating the
+# formula for all T avoids a Metal f32 quantization artifact (Float32(1e9-1) =
+# 1.0f9 = 1e9, which would falsely trigger the branch and return tiny instead of
+# ~1.46e-19).
+@inline function k2(T::Real)
+    R = typeof(T)
+    return R(4.881357e-6) * T^R(-1.5) * (R(1.0) + R(1.14813e2)*T^R(-0.407))^R(-2.242)
+end
+@scalarkernel k2
+
+# ── k4 : HeII + e → HeI + photon  (CaseB recombination) ─────────────────────
+# Fit: Hui & Gnedin (1997) CaseB. No branch in the CaseB path.
+@inline function k4(T::Real)
+    R = typeof(T)
+    return R(1.26e-14) * (R(5.7067e5) / T)^R(0.75)
+end
+@scalarkernel k4
+
+# ── k6 : HeIII + e → HeII + photon  (CaseB recombination) ───────────────────
+# Fit: Hui & Gnedin (1997) CaseB. Same quantization note as k2.
+@inline function k6(T::Real)
+    R = typeof(T)
+    return R(7.8155e-5) * T^R(-1.5) * (R(1.0) + R(2.0189e2)*T^R(-0.407))^R(-2.242)
+end
+@scalarkernel k6
+
+# ── k57 : HI + HI → HII + HI + e  (collisional ionisation) ──────────────────
+# Fit: Lenzuni, Chernoff & Salpeter (1991); cross-sections: Gealy & van Zyl (1987).
+# The Boltzmann factor exp(−1.578e5/T) makes this NEGLIGIBLE below ~5000 K (needs
+# 13.6 eV; underflows to ~0 at collapse temperatures) — NO low-T floor.  A former
+# 1e-20 floor at T≤3e3 K was a spurious persistent electron source: it pinned
+# x_e≈√(k57 n_HI²/k2)~3e-5 at the H₂-cooling floor (~170 K), which kept the H⁻
+# channel alive and let f_H2 over-grow to ~0.1 instead of saturating ~1e-3.  Without
+# it, electrons recombine away (case-B, fast) and H⁻ formation self-halts (correct).
+@inline function k57(T::Real)
+    R = typeof(T)
+    T > zero(R) || return zero(R)
+    @fastmath return R(1.2e-17) * T^R(1.2) * exp(-R(1.578e5) / T)
+end
+@scalarkernel k57
+
+# ── k58 : HI + HeI → HII + HeI + e  (collisional ionisation) ────────────────
+# Fit: Lenzuni, Chernoff & Salpeter (1991); cross-sections: van Zyl, Le & Amme (1981).
+# Boltzmann-suppressed → ~0 below ~5000 K; NO low-T floor (see k57).
+@inline function k58(T::Real)
+    R = typeof(T)
+    T > zero(R) || return zero(R)
+    @fastmath return R(1.75e-17) * T^R(1.3) * exp(-R(1.578e5) / T)
+end
+@scalarkernel k58

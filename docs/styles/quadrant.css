@@ -1,0 +1,33 @@
+/* Quadrant's qd-* tokens and provenance marks, adapted for Julia source. */
+:root {
+  --qd-accent: var(--bs-primary);
+  --qd-gap: 0.75rem;
+  --qd-radius: 6px;
+  --qd-border: color-mix(in srgb, currentColor 22%, transparent);
+  --qd-tint: color-mix(in srgb, currentColor 5%, transparent);
+  --qd-muted: color-mix(in srgb, currentColor 70%, transparent);
+}
+body { letter-spacing: 0; }
+sup.qd-src { font-size: 0.7em; margin-left: 0.25em; }
+sup.qd-src a { color: inherit; opacity: 0.8; text-decoration-style: dotted; }
+a.qd-test {
+  display: inline-block;
+  font-size: 0.78em;
+  margin-left: 0.3em;
+  padding: 0 0.4em;
+  border: 1px solid var(--qd-border);
+  border-radius: 3px;
+  color: inherit;
+}
+.callout, pre, .sourceCode { border-radius: var(--qd-radius); }
+main { min-width: 0; }
+main p, main li, main td { overflow-wrap: anywhere; }
+.table { font-size: 0.9rem; }
+.cell-output-display, .katex-display { overflow-x: auto; overflow-y: hidden; }
+pre { max-width: 100%; }
+.qd-note { color: var(--qd-muted); font-size: 0.875rem; }
+@media (max-width: 767px) {
+  h1.title { font-size: 2rem; }
+  h2 { font-size: 1.5rem; }
+  .table { font-size: 0.82rem; }
+}

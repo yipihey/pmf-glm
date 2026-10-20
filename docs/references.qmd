@@ -1,0 +1,21 @@
+---
+title: "Scientific references"
+---
+
+The nonlinear PMF program is motivated by @jedamzik2025. The independent
+linear, photon, and recombination tools follow @schiff2025, including the
+corrected equations and implementation choices recorded in their source
+provenance. These references specify related model systems; matching a shared
+limit does not establish equivalence of the complete nonlinear calculations.
+
+GLM divergence cleaning follows @dedner2002 and the HLLD flux follows
+@miyoshi2005. Kernel-level modifications for cosmological clocks, stiff drag,
+photon coupling, and conservation are documented in the implementation pages.
+
+All four citation records were checked against NASA ADS when this standalone
+distribution was prepared. ADS links are retained in `references.bib`.
+For a result, cite the physical model, exact software revision, numerical
+controls, and any supplied response table or recombination history.
+
+::: {#refs}
+:::

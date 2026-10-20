@@ -1,0 +1,48 @@
+name: Numerical validation
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cpu:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+        threads: [1, 4]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.12'
+      - uses: julia-actions/cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: julia --project=. --threads=${{ matrix.threads }} scripts/bootstrap.jl --backend=cpu
+      - run: julia --project=. --threads=${{ matrix.threads }} scripts/validate.jl
+      - run: julia --project=. --threads=${{ matrix.threads }} scripts/run_pmf.jl examples/smoke.toml --output=results/ci-smoke
+      - run: julia --project=. --threads=${{ matrix.threads }} scripts/run_pmf.jl examples/cosmology-smoke.toml --output=results/ci-cosmology
+      - run: julia --project=. --threads=${{ matrix.threads }} scripts/validate_production.jl --backend=cpu
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-${{ matrix.os }}-${{ matrix.threads }}threads
+          path: |
+            docs/data/validation*
+            docs/data/production-*.toml
+            results/ci-*/metadata.toml
+            results/ci-*/run.log
+  reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[test]'
+      - run: python -m pytest
+      - run: python scripts/check_portability.py

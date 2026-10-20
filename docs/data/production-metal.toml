@@ -1,0 +1,32 @@
+backend = "metal"
+cosmology_status = "COMPLETED"
+created_utc = "2026-10-20T16:38:04.869"
+julia_threads = 4
+julia_version = "1.12.6"
+machine = "PHY-FD69NP6NG2"
+restart_error_tolerance = 5.0e-6
+restart_fields = 15
+restart_max_scaled_error = 2.710505431213761e-20
+run_directory = "results/production-metal-Xzxk3i"
+schema_version = 1
+scope = "real full-physics smoke plus complete-state continuous/restarted trajectory parity"
+source_fingerprint_sha256 = "462502b69bbbedd50576266ca1fe81085e91af91132e4028a3cd46e03edc460f"
+status = "PASS"
+wall_seconds = 159.71839904785156
+
+[restart_field_errors]
+mhd_U_1 = 0.0
+mhd_U_2 = 0.0
+mhd_U_3 = 0.0
+mhd_U_4 = 6.776263578034403e-21
+mhd_U_5 = 0.0
+mhd_U_6 = 0.0
+mhd_U_7 = 0.0
+mhd_U_8 = 0.0
+mhd_U_9 = 0.0
+particle_px = 4.235164736271502e-22
+particle_py = 2.117582368135751e-22
+particle_pz = 1.0587911840678754e-22
+particle_vx = 2.710505431213761e-20
+particle_vy = 2.710505431213761e-20
+particle_vz = 1.3552527156068805e-20

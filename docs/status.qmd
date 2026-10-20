@@ -1,0 +1,80 @@
+---
+title: "Status, provenance, and attribution"
+---
+
+## This documentation build {#sec-build-status}
+
+Source revision: **{{< var build.sha >}}**. Full commit identifier:
+`{{< var build.commit >}}`. Rendered **{{< var build.rendered >}}**.
+
+This book publishes the source snapshot and supplied measurements, not a new
+execution of the science suite. A modified working tree is labeled in the
+revision. [Test evidence](test-results.qmd) carries its own source fingerprint
+and scope; [performance](performance.qmd) separates kernel from full-run timings.
+
+## What is and is not certified {#sec-certification-status}
+
+| Claim | Evidence required |
+|---|---|
+| Documentation integrity | Successful render, source provenance checks, local link/fragment check |
+| Current extraction CPU tests | Current `scripts/validate.jl --backend=cpu` record and log |
+| Metal/CUDA hardware correctness | Separate successful record on that device, with documented coverage |
+| A physical recombination or PMF conclusion | Matched temporal/spatial/spectral/start-redshift/chemistry convergence artifacts |
+| Full Boltzmann or nonlinear Lyman-alpha accuracy | Not established by the current P1/smoothing/response-table model |
+| Reproduction of all Schiff 3D results | Not claimed by shipping linear reference tools or example configurations |
+
+Historical upstream Metal gates and performance figures are **not current
+extraction certification**. Source support for CUDA is **not CUDA hardware
+validation**. A `NOT_RUN` device stays unmeasured even if another backend passes.
+
+## Source lineage {#sec-lineage}
+
+- MHD and Poisson sources were extracted from Vespa's `lib/MHDKernels` and
+  `lib/PoissonKernels`; the full runner descends from
+  `MHDKernels/test/pmf_dm_lattice_bench.jl`.
+- Chemistry and emission are bundled from `ChemistryKernels.jl` and
+  `EmissionKernels.jl`, preserving their source and license notices.
+- Portable Schiff/LMHD, photon, and Lyman-alpha reference/analysis algorithms
+  descend from `vespa-runs/tools/sv25_reference`. Their own provenance lists
+  copied source hashes and adaptations, including dirty-working-tree content.
+- This book adapts the actual [Quadrant template](https://github.com/yipihey/quadrant):
+  its Quarto book structure, brand palette, theme-aware tokens, source/test
+  provenance conventions, numbered math, notation/status appendices, and footer.
+  Rustdoc resolution was replaced by checked local Julia source snapshots;
+  there is no WebAssembly simulator or fabricated laboratory.
+
+The machine-readable extraction record is `provenance/extraction.json`;
+the independent science tools use `tools/reference/provenance.json`. Subsequent
+standalone fixes can intentionally differ from the initially recorded imported
+hashes. Use the run's `source_fingerprint_sha256` for its actual implementation.
+
+## Licensing and credit {#sec-attribution}
+
+The integration, extracted project-owned numerical/reference code, and
+documentation are distributed under the root BSD-3-Clause license, with
+`CITATION.cff` providing the software citation. Retain per-component notices.
+Chemistry/Emission retain their
+University of Illinois/NCSA-style Enzo license text. Do not infer that those
+licenses automatically cover external manuscripts, datasets, or software.
+The extraction provenance records the source state; the root license supplies
+this distribution's terms for the project-owned reference implementation.
+
+Credit the original scientific algorithms, source projects, reference models,
+and the specific numerical/physics modifications used for a result. Cite
+Schiff/Venumadhav or Jedamzik/Abel work only for the model actually compared;
+the package's examples are not a replacement for reading the original papers.
+No paper acceptance, DOI, or historical campaign certification is asserted here.
+
+## How to cite and share {#sec-cite}
+
+The repository's `CITATION.cff` supplies citation metadata without inventing a
+software DOI. Cite **PMFGLM.jl, Tom Abel and contributors**, the
+[repository](https://github.com/yipihey/pmf-glm), the exact commit or source
+fingerprint, and the numerical model/settings used. Include reference-tool
+provenance for oracle-based comparisons. Do not cite an uncommitted working tree
+as if it were an immutable release.
+
+Share configurations, resolved environments, raw tables, test records, logs,
+and scripts with figures. Hypothesis annotations are available for discussion;
+GitHub issues and edit/source links support corrections. Avoid publishing
+machine-local paths, private data, or huge checkpoints without review.

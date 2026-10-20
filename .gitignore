@@ -1,0 +1,22 @@
+# Reproducible package environments resolve from Project.toml; run metadata
+# records the actual resolved manifest and its checksum.
+Manifest*.toml
+environments/*/Manifest*.toml
+results/
+runs/
+output/
+*.jls
+*.bin
+*.tmp
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.DS_Store
+docs/_site/
+docs/.quarto/
+docs/_freeze/
+.pytest_cache/
+uv.lock
+build/
+dist/

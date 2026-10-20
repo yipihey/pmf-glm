@@ -1,0 +1,74 @@
+project:
+  type: book
+  output-dir: _site
+  pre-render:
+    - python3 scripts/prepare.py
+  resources:
+    - sources/**
+    - data/**
+
+book:
+  title: "PMFGLM.jl"
+  subtitle: "Primordial magnetic fields on a single node"
+  site-url: https://yipihey.github.io/pmf-glm/
+  repo-url: https://github.com/yipihey/pmf-glm
+  repo-branch: main
+  repo-subdir: docs
+  repo-actions: [edit, source, issue]
+  search: true
+  sidebar:
+    style: docked
+    collapse-level: 2
+  chapters:
+    - index.qmd
+    - part: "Run"
+      chapters:
+        - getting-started.qmd
+        - backends.qmd
+        - configuration.qmd
+        - outputs.qmd
+    - part: "Understand"
+      chapters:
+        - physics.qmd
+        - initial-conditions.qmd
+        - validation.qmd
+        - test-results.qmd
+        - performance.qmd
+    - part: "Collaborate"
+      chapters:
+        - development.qmd
+        - architecture.qmd
+    - references.qmd
+  appendices:
+    - notation.qmd
+    - status.qmd
+  page-footer:
+    left: "PMFGLM.jl · Quadrant documentation"
+    right: "build {{< var build.sha >}} · {{< var build.rendered >}}"
+
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: darkly
+    css: styles/quadrant.css
+    toc: true
+    number-sections: true
+    number-depth: 2
+    code-fold: false
+    code-tools: true
+    code-copy: true
+    html-math-method: katex
+    lightbox: true
+    date-modified: last-modified
+    comments:
+      hypothesis:
+        theme: clean
+        openSidebar: false
+
+execute:
+  enabled: false
+
+bibliography: references.bib
+
+lang: en

@@ -1,0 +1,26 @@
+# Matched physical Fourier support and seed. This is a run definition, not
+# certification evidence. Start with smoke runs before a long science suite.
+base_config = "pmf-recombination.toml"
+output_dir = "../runs/convergence"
+
+[[cases]]
+label = "N64-cfl02"
+[cases.run]
+n = 64
+cfl = 0.2
+[cases.chemistry]
+smoothing_sigma_cells = 4.0
+
+[[cases]]
+label = "N128-cfl02"
+[cases.run]
+n = 128
+cfl = 0.2
+
+[[cases]]
+label = "N64-cfl01"
+[cases.run]
+n = 64
+cfl = 0.1
+[cases.chemistry]
+smoothing_sigma_cells = 4.0

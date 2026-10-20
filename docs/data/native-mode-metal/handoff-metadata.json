@@ -1,0 +1,134 @@
+{
+  "amplitude_sign": 1,
+  "background": {
+    "pressure_code_mean": 57.32241732192102,
+    "temperature_K": 8722.72303269437,
+    "xHII": 0.9999999997524076,
+    "xHeIII_mean": 7.885488326479681e-16,
+    "xHeII_mean": 0.08128918104577565,
+    "xe_total_mean": 1.0812891807981848
+  },
+  "box_ckpc_h": 1.0,
+  "chem_hydrogen_reference": 0.9999999997524076,
+  "chem_hydrogen_storage": "centered",
+  "epsilon": 0.025,
+  "field_pG_comoving": 300.0,
+  "generation_wall_seconds": 7.378948458004743,
+  "guide_field_code": 49.43442438375413,
+  "integrity": {
+    "brms_code": 49.434665710314626,
+    "chem_HII_max": 6.947553643499305e-12,
+    "chem_HII_min": -6.947553643499305e-12,
+    "dm_delta_rms": 0.0002102329171435114,
+    "gas_delta_rms": 0.010085094558384177,
+    "pressure_min": 56.50922477170595,
+    "rho_min": 0.9858062002252231
+  },
+  "k_comoving_mpc_inv": 4234.866897039041,
+  "kmode": 1,
+  "max_dln_a": 0.0001,
+  "mode_state": {
+    "b_mode_over_initial": {
+      "imag": 0.0,
+      "real": 0.17675769837154073
+    },
+    "b_x_over_B0": {
+      "imag": 0.0,
+      "real": 0.0
+    },
+    "b_y_over_B0": {
+      "imag": 0.0,
+      "real": 0.004418942459288518
+    },
+    "delta_b": {
+      "imag": 0.0,
+      "real": -0.014262477502281998
+    },
+    "delta_dm": {
+      "imag": 0.0,
+      "real": -0.000297314242681613
+    },
+    "delta_gamma": {
+      "imag": 0.0,
+      "real": -1.438940133975634e-10
+    },
+    "delta_temperature": {
+      "imag": 0.0,
+      "real": 0.06556506542433126
+    },
+    "delta_temperature_fraction": {
+      "imag": 0.0,
+      "real": 7.516582284979282e-06
+    },
+    "delta_xe": {
+      "imag": 0.0,
+      "real": 6.981171950163734e-12
+    },
+    "pressure_fraction": {
+      "imag": 0.0,
+      "real": -0.014254960916768866
+    },
+    "slip_x": {
+      "imag": 0.0,
+      "real": 0.0
+    },
+    "slip_y": {
+      "imag": -1088.640653825493,
+      "real": 0.0
+    },
+    "slip_z": {
+      "imag": 972.5323077614481,
+      "real": 0.0
+    },
+    "specific_internal_energy_fraction": {
+      "imag": 0.0,
+      "real": 7.516585513131743e-06
+    },
+    "v_b_x": {
+      "imag": 0.0,
+      "real": 0.0
+    },
+    "v_b_y": {
+      "imag": 1091.4885140969175,
+      "real": 0.0
+    },
+    "v_b_z": {
+      "imag": -972.5322843297656,
+      "real": 0.0
+    },
+    "v_dm_z": {
+      "imag": -56.64812973256372,
+      "real": 0.0
+    },
+    "v_gamma_x": {
+      "imag": 0.0,
+      "real": 0.0
+    },
+    "v_gamma_y": {
+      "imag": 2.8478602714243926,
+      "real": 0.0
+    },
+    "v_gamma_z": {
+      "imag": 2.3431682538863075e-05,
+      "real": 0.0
+    }
+  },
+  "particle_velocity_convention": "dx/dtau, dtau=H0*dt/a^2",
+  "particle_vx_mode_code": {
+    "imag": -1.7697010225730617e-06,
+    "real": 0.0
+  },
+  "payload_bytes": 3178496,
+  "payload_gib": 0.002960205078125,
+  "reference_source_fingerprint_sha256": "cc9e321555d0a01d4effe551a34a7fe6c720dd11c7c03b2fb1cfa80d1073310f",
+  "resolution": 32,
+  "schema": 1,
+  "scope": "linear mean-field photon-P1 handoff; not Batchelor certified",
+  "signed_epsilon": 0.025,
+  "status": "PASS",
+  "theta_rad": 0.7853981633974483,
+  "velocity_unit_cm_s_at_handoff": 143129.99384492624,
+  "velocity_unit_cm_s_at_start": 800000.0,
+  "zhandoff": 3200.0,
+  "zstart": 100000.0
+}

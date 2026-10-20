@@ -1,0 +1,114 @@
+---
+title: "Installation and first run"
+---
+
+## Prerequisites {#sec-prerequisites}
+
+- Julia **1.12 or newer**, as declared by the root `Project.toml`.
+- A working internet connection for the first dependency/artifact installation.
+- Enough memory for the selected grid and scratch arrays. Begin at `16^3`, not
+  a production resolution.
+- Git to clone this repository. Quarto and Python are not needed for Julia runs.
+
+Bundled path dependencies are declared in the **active root environment**.
+An arbitrary global Julia environment will not resolve this package's local
+`[sources]`. Do not install a separate registry copy of a bundled library.
+
+## Five-minute CPU path {#sec-cpu-quickstart}
+
+Run these from the repository root:
+
+```sh
+julia --project=. -t auto scripts/bootstrap.jl --backend=cpu
+julia --project=. -t auto scripts/run_pmf.jl examples/smoke.toml \
+  --backend=cpu --output=results/first
+```
+
+Bootstrap instantiates and precompiles the active project. It does not run a
+science campaign or install GPU packages into the CPU project.
+{{< src "scripts/bootstrap.jl" "Pkg.instantiate" >}}
+
+`smoke.toml` is a small, noncosmological MHD-plus-gravity case with chemistry
+off. It is deliberately not a recombination calculation. Expect the wrapper to
+print an output directory and log path; inspect `results/first/run.log` for the
+solver's progress and `metadata.toml` for `status = "COMPLETED"`. Keep failures
+and their logs rather than reusing the directory.
+
+The five-minute target excludes installing Julia and is not a measured timing
+guarantee. [Performance evidence](performance.qmd) gives actual timings when available.
+
+### Clone and activate, rather than a dependency-only install
+
+Use this checkout as the active project. `Pkg.add(url="...")` from another
+project is not the documented installation path: the package's `[sources]`
+are honored from an active root, not inherited as arbitrary transitive local
+dependency declarations. Keep the bundled `lib/` directories with the checkout.
+The optional GPU roots repeat the needed source mappings for their active
+environment. No custom registry is required by the clone-and-bootstrap path.
+
+### Optional Python analysis installation
+
+The Python tools are independent of Julia and require Python 3.11+, NumPy,
+SciPy, and Matplotlib. From this checkout:
+
+```sh
+uv sync --extra test
+uv run pmf-reference results/reference
+uv run pmf-matched-scenario results/matched
+```
+
+Alternatively, `python3 -m pip install .` installs the Python package and its
+three command-line entry points in an appropriate Python environment. For a
+redistributable Python wheel, run `uv build --wheel` and install the resulting
+wheel from `dist/` with pip. This packages **only the Python reference/analysis
+tools**, not the Julia solver, bundled Julia libraries, GPU runtime, or complete
+science campaign data. Python installation does not replace Julia bootstrap.
+
+::: {.callout-tip}
+## Try it: full-physics installation check
+```sh
+julia --project=. -t auto scripts/run_pmf.jl examples/cosmology-smoke.toml \
+  --backend=cpu --output=results/cosmology-first
+```
+This exercises the cosmological runner near `z=3200`, including radiation and
+mixing chemistry. Its tiny grid and short interval cannot establish science accuracy.
+:::
+
+## Inspect before launching {#sec-dry-run}
+
+```sh
+julia --project=. scripts/run_pmf.jl examples/pmf-recombination.toml \
+  --backend=cpu --output=results/recombination --dry-run
+```
+
+The dry run prints the resolved solver environment without launching a child
+simulation. Check the physical box, initial redshift, PMF amplitude and band,
+chemistry settings, and output paths. The facade intentionally strips inherited
+shell `MHD_*` settings from the child: put reproducible overrides in the TOML
+`[environment]` table. Other settings such as Julia threads and
+`PMF_FFTW_THREADS` remain available.
+{{< src "src/provenance.jl" "child_env" >}}
+
+## Next steps {#sec-next-steps}
+
+1. Run [validation](validation.qmd#sec-run-tests) before trusting a new machine.
+2. Choose [CPU, Metal, or CUDA](backends.qmd) with its matching active environment.
+3. Copy an example configuration to a new experiment file and inspect it with
+   `--dry-run`.
+4. Define the [physical spectrum and normalization](initial-conditions.qmd) and
+   a convergence matrix before spending time on a large grid.
+5. Save the run metadata, exact configuration, and test evidence with the result.
+
+## Troubleshooting {#sec-install-troubleshooting}
+
+| Symptom | Check |
+|---|---|
+| A bundled package cannot be resolved | Run bootstrap from this checkout, then use `--project=.` or the selected GPU environment |
+| `Metal` or `CUDA` is missing | Bootstrap that backend and run with `--project=environments/metal` or `cuda` |
+| GPU backend is not registered | Load the GPU package, check `functional()`, and verify package extensions loaded |
+| Output directory already contains a run | Use a new directory; restarting requires an explicitly enabled compatible checkpoint |
+| Slow first launch | Dependencies and GPU kernels compile on first use; separate this from warm-run measurements |
+| A source-data path points elsewhere | Put an explicit path in `[environment]`; imported initial states/tables are not downloaded automatically |
+
+See [Float32 and positivity checks](validation.qmd#sec-thermal-floors) before
+loosening floors or tolerances to get a run through.

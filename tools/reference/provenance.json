@@ -1,0 +1,180 @@
+{
+  "content_basis": "working-tree bytes, including dirty and untracked content; not a git archive",
+  "excluded": [
+    "campaigns",
+    "production outputs",
+    ".vendor",
+    "PDFs and raster comparisons",
+    "run_paper_reproduction.py and other campaign launchers",
+    "Julia/Metal runners",
+    "native nonlinear hierarchy validation"
+  ],
+  "inspected_not_copied": [
+    {
+      "sha256": "0ba7a3e58a1acfbd79502b2a6279725465d2833799b1c48612b885a20efa80d6",
+      "source_path": "/Users/tabel/Projects/Vespa.jl/lib/MHDKernels/test/pmf_dm_lattice_bench.jl"
+    },
+    {
+      "sha256": "a65c0c34388ddd77293ad17b6975e8a2b2557ebd73898cb48aa7752e5aba44fe",
+      "source_path": "/Users/tabel/Projects/ChemistryKernels.jl/src/ChemistryKernels.jl"
+    },
+    {
+      "sha256": "abb6702da3f9759616465d60fe3d89eeecd96657bf15a5ceaf51815a430369a1",
+      "source_path": "/Users/tabel/Projects/ChemistryKernels.jl/test/fixtures/gen_recfast_v2.py"
+    }
+  ],
+  "license_notes": {
+    "chemistry_fixture": "Original ChemistryKernels Enzo Public License retained verbatim beside the fixture.",
+    "third_party_runtime": "NumPy, SciPy, Matplotlib and their dependencies are installed separately, not vendored.",
+    "vespa_runs": "No LICENSE or COPYING file found at source root or sv25_reference. No new license is inferred or granted; confirm redistribution rights before release."
+  },
+  "new_files": [
+    "pyproject.toml",
+    "tools/README.md",
+    "tools/reference/__init__.py",
+    "tools/analysis/__init__.py",
+    "tools/reference/run_reference.py",
+    "tools/reference/matched_scenario.py",
+    "tools/reference/compare_reference.py",
+    "tools/reference/record_provenance.py",
+    "tools/analysis/analyze_production.py",
+    "tools/analysis/render_density_frames.py",
+    "test/python/test_portable_tools.py",
+    "test/python/fixtures/README.md",
+    "test/python/fixtures/metadata.toml",
+    "test/python/fixtures/history.tsv",
+    "test/python/fixtures/spectra.tsv",
+    "test/python/fixtures/density_pdf.tsv"
+  ],
+  "records": [
+    {
+      "adaptation": "imports only",
+      "destination_path": "tools/reference/lmhd.py",
+      "extracted_sha256": "e2815fc5e473d55267b690c364893f1c12e2b02a8224231fe7b886c8e2fce5b7",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/lmhd.py",
+      "source_sha256": "e2815fc5e473d55267b690c364893f1c12e2b02a8224231fe7b886c8e2fce5b7"
+    },
+    {
+      "adaptation": "imports only",
+      "destination_path": "tools/reference/lya_rt.py",
+      "extracted_sha256": "b038e10399006cdeb82da7357abc908608adf480b03aafc77fe98dd69a60d799",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/lya_rt.py",
+      "source_sha256": "922927d7c83b8fceaa35280965350874091df6886f8a0a9d64c9af57240e2f39"
+    },
+    {
+      "adaptation": "imports only",
+      "destination_path": "tools/reference/sv25_paper.py",
+      "extracted_sha256": "d51e37c14541d57d70cf5b6c48491a136fddb3f7eb903230b23ba57f85083916",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/sv25_paper.py",
+      "source_sha256": "20cb696ccba1aceee5606ae802666c5bb8cb82ce4faff04f14faf7b829942cce"
+    },
+    {
+      "adaptation": "imports only",
+      "destination_path": "tools/reference/build_p1_meanfield_handoff.py",
+      "extracted_sha256": "286fd3cda725a9949aef625d6d9401ccd952208c9b32c31897c7bb2ad8050a72",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/build_p1_meanfield_handoff.py",
+      "source_sha256": "dec17bf661c8fba850ca1792f9df4d8b9addd185e5d781621eafe4c25af7c127"
+    },
+    {
+      "adaptation": "standalone import; component arguments explicitly set amplitude_sign=1 to match current single-mode generator",
+      "destination_path": "tools/reference/build_p1_multimode_handoff.py",
+      "extracted_sha256": "b36279a26cdfc2f9a8dc845b8a10acfe046cea178a1476387efbf0926c688555",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/build_p1_multimode_handoff.py",
+      "source_sha256": "45e98033836a7cf9754f5bac5b69454d2fe3576aad2994fd23af276c0014f9a6"
+    },
+    {
+      "adaptation": "imports only",
+      "destination_path": "tools/reference/build_lya_response_table.py",
+      "extracted_sha256": "78ce2adbc36d99f2e9c45a2ad356b0295822b412864119a666f3232cf1b473ca",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/build_lya_response_table.py",
+      "source_sha256": "aaaa43fb350c37aaee3031401b8dc3988351b8fb50ae35418b0d5723698dc063"
+    },
+    {
+      "adaptation": "imports only",
+      "destination_path": "tools/reference/compare_matched_modes.py",
+      "extracted_sha256": "9baa8d8d0500ca7c396f78b7193052bab4d8bee46ab94923646d5b3f122f5f4e",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/compare_matched_modes.py",
+      "source_sha256": "25333ce5e5bea5321ef4b1f0a3052475b5934726720179e9c3de44e768a4db6b"
+    },
+    {
+      "adaptation": "imports only",
+      "destination_path": "tools/reference/compare_multimode_to_oracle.py",
+      "extracted_sha256": "bffb23d8c98beecd7dafec95e6f983eb11c2f8e6d8363d9e4bc352541e8c6a04",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/compare_multimode_to_oracle.py",
+      "source_sha256": "2b45835580bbdcfbb65a09afd2ba76bcf562d9f116b066259d0f4f189b8b4980"
+    },
+    {
+      "adaptation": "unchanged",
+      "destination_path": "tools/analysis/analyze_temporal_order.py",
+      "extracted_sha256": "f695657a2d0c321b149c94d67674e5a3025e195513e3e017c01b53c945c804eb",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/analyze_temporal_order.py",
+      "source_sha256": "f695657a2d0c321b149c94d67674e5a3025e195513e3e017c01b53c945c804eb"
+    },
+    {
+      "adaptation": "standalone imports; local RECFAST fixture; raster-only tests excluded",
+      "destination_path": "test/python/test_lmhd.py",
+      "extracted_sha256": "11e11d9aafb2d29abb96b03d65568cc9fdee755dd8d079ad551ba7a2b0c39041",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/test_lmhd.py",
+      "source_sha256": "5dfd21137f7d2b1ff26a1fe19846c4c3204d55ef1c2a191c260f718daf0d1446"
+    },
+    {
+      "adaptation": "standalone imports; local RECFAST fixture; raster-only tests excluded",
+      "destination_path": "test/python/test_lya_rt.py",
+      "extracted_sha256": "c23d9902c40bbc8d1e88167da797891149bc5d1fcf4b560feb6b8cf3b493bb1e",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/test_lya_rt.py",
+      "source_sha256": "332e48fa68284403d28e9552669dee0056c1137dc8340bd5e4fc03860bacae6e"
+    },
+    {
+      "adaptation": "standalone imports; local RECFAST fixture; raster-only tests excluded",
+      "destination_path": "test/python/test_p1_handoff.py",
+      "extracted_sha256": "0e3132d27c3b6abc402b38560871d38af69ee7893319bc74fc03352c798a97ca",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/test_p1_handoff.py",
+      "source_sha256": "63bcd41d643da53bb78a6c1f59d65f661dbc473272d0282af1a1421eedbc6780"
+    },
+    {
+      "adaptation": "standalone imports; regression test generates and combines two small modes",
+      "destination_path": "test/python/test_multimode.py",
+      "extracted_sha256": "1f7bfb90cf360b1deaa49338b6dc5d693a77984b95f1e9dd12f65b6b2b634684",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/test_multimode.py",
+      "source_sha256": "45a467da02f1b448dc75873afc26a780c61869dc0e7f4b3f86be4f75b74ae7b9"
+    },
+    {
+      "adaptation": "standalone imports; local RECFAST fixture; raster-only tests excluded",
+      "destination_path": "test/python/test_temporal_order.py",
+      "extracted_sha256": "f5a74bd88c73e9c9e567be86edf40a6d042c78cf58dca269bd29126ee7d9f287",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/test_temporal_order.py",
+      "source_sha256": "9ad0b8ccfff00f2076dc170e3e10bf066d9f1b2282aff09e90922e6ac2597e08"
+    },
+    {
+      "adaptation": "standalone imports; local RECFAST fixture; raster-only tests excluded",
+      "destination_path": "test/python/test_sv25_paper.py",
+      "extracted_sha256": "13d0ef7d0df70edc68b622fd3dca0dbdb92310d77f107a091669eef4275fc512",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/test_sv25_paper.py",
+      "source_sha256": "d1e002862be091e8c79edd38562bc778587d1deee9b3427b08117c79c6bed7bb"
+    },
+    {
+      "adaptation": "unchanged",
+      "destination_path": "test/python/fixtures/recfast_v2_xe.csv",
+      "extracted_sha256": "2eafd95caaf7e5e614f6d9806f0a31e42add6db3e84c3d61d0e5597605e5a1fb",
+      "source_path": "/Users/tabel/Projects/ChemistryKernels.jl/test/fixtures/recfast_v2_xe.csv",
+      "source_sha256": "2eafd95caaf7e5e614f6d9806f0a31e42add6db3e84c3d61d0e5597605e5a1fb"
+    },
+    {
+      "adaptation": "unchanged",
+      "destination_path": "test/python/fixtures/licenses/ChemistryKernels.LICENSE",
+      "extracted_sha256": "4e55f6a0b053d929b5f1121ad0430877f7bbc5e6b49fde2b7a056ca0cae6176a",
+      "source_path": "/Users/tabel/Projects/ChemistryKernels.jl/LICENSE",
+      "source_sha256": "4e55f6a0b053d929b5f1121ad0430877f7bbc5e6b49fde2b7a056ca0cae6176a"
+    },
+    {
+      "adaptation": "constants KPC_CM, HYDROGEN_MASS_FRACTION, OMEGA_M, OMEGA_B and two unit helpers only; positive-box validation added",
+      "destination_path": "tools/reference/matched_units.py",
+      "extracted_sha256": "a5f97b7f7850baeca30b04cd60d53db786ba20000e7ea554e8de2f67712f9438",
+      "source_path": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference/run_matched_vespa.py",
+      "source_sha256": "bbc5c3f0350ee9c5fbade57c6cfad88ee23cdf2944d65ea56bf04b26ebead248"
+    }
+  ],
+  "schema": 1,
+  "source_revision": "0ba3cc3e147cda053504267c17d6d1800c35562c",
+  "source_tree": "/Users/tabel/Projects/vespa-runs/tools/sv25_reference"
+}

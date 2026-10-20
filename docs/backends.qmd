@@ -1,0 +1,120 @@
+---
+title: "CPU, Metal, and CUDA"
+---
+
+## Backend contract {#sec-backend-contract}
+
+| Backend | Active project | Production precision | Transform path |
+|---|---|---|---|
+| CPU | `.` | Float32; Float64 reference available | Native FFTW real transforms |
+| Metal | `environments/metal` | Float32 only | MPSGraph real FFT for native Metal paths |
+| CUDA | `environments/cuda` | Float32 runner | Native cuFFT real transforms |
+
+The libraries have broader low-level capabilities than the production runner.
+In particular, a CUDA-capable array type accepting Float64 does not make
+`run.precision="f64"` a supported GPU production configuration. Device extensions
+register backends only after the GPU package has loaded on functional hardware.
+{{< src "lib/MHDKernels/src/MHDKernels.jl" "function backend" >}}
+
+## Parallel CPU {#sec-cpu}
+
+```sh
+julia --project=. -t auto scripts/bootstrap.jl --backend=cpu
+PMF_FFTW_THREADS=4 julia --project=. -t auto scripts/run_pmf.jl \
+  examples/smoke.toml --backend=cpu --output=results/cpu-threads
+```
+
+`-t auto` supplies Julia threads to the CPU KernelAbstractions backend. It is
+not MPI and does not distribute a job across nodes. `PMF_FFTW_THREADS` controls
+FFTW independently; the launcher defaults to `min(4, Threads.nthreads())`.
+Benchmark several Julia/FFTW thread combinations instead of assuming that the
+largest count is fastest. Avoid running several all-core jobs simultaneously.
+{{< src "scripts/_production.jl" "FFTW.set_num_threads" >}}
+
+For a roundoff/reference comparison, set `run.precision="f64"` with CPU. Some
+diagnostic and initialization paths still use Float32 intermediates; a CPU-f64
+run is not proof that every operation is double precision.
+
+## Apple Metal {#sec-metal}
+
+Use Apple Silicon and a macOS/Metal stack supported by the resolved `Metal.jl`
+version. The GPU environment is separate and includes all active-root local
+source declarations.
+
+```sh
+julia --project=. -t auto scripts/bootstrap.jl --backend=metal
+julia --project=environments/metal -e 'using Metal; @assert Metal.functional(); Metal.versioninfo()'
+julia --project=environments/metal -t auto scripts/run_pmf.jl \
+  examples/smoke.toml --backend=metal --output=results/metal-first
+julia --project=environments/metal -t auto scripts/test_gpu.jl --backend=metal
+```
+
+The GPU kernels and MPSGraph path use Float32; do not request Float64. Native
+MPS FFTs are not interchangeable with CPU FFTW plans. The radiation extension
+batches spatial FFTs over three axes, retaining the fourth dimension as a
+channel batch; zero-offset staging avoids the documented nonzero-view-offset
+hazard. These details are part of backend parity testing, not optional changes.
+{{< src "lib/MHDKernels/ext/MHDKernelsMetalExt.jl" "_radiation_forward_batch!" >}}
+
+Unified memory is shared with macOS and other applications. Measure live memory
+at increasing grid sizes, including radiation, chemistry, projection, spectra,
+and checkpoint peaks. Do not size a run from the nine MHD fields alone.
+
+## NVIDIA CUDA {#sec-cuda}
+
+Use an NVIDIA GPU and a driver compatible with the CUDA.jl version selected
+by the GPU environment. Bootstrap installs Julia package/artifact dependencies,
+not the system GPU driver.
+
+```sh
+julia --project=. -t auto scripts/bootstrap.jl --backend=cuda
+julia --project=environments/cuda -e 'using CUDA; @assert CUDA.functional(); CUDA.versioninfo()'
+julia --project=environments/cuda -t auto scripts/run_pmf.jl \
+  examples/smoke.toml --backend=cuda --output=results/cuda-first
+julia --project=environments/cuda -t auto scripts/test_gpu.jl --backend=cuda
+```
+
+The current CUDA MHD extension routes `impl=:auto` to the shared KA algorithm.
+Its historical native `impl=:raw` kernel is disabled because it predates the
+current Riemann/source-aware interface. Radiation FFT plans on `CuArray`
+dispatch to cuFFT, including the channel batch. Explicit portable gravity FFT
+options remain available and have different performance characteristics.
+{{< src "lib/MHDKernels/ext/MHDKernelsCUDAExt.jl" "_radiation_forward_batch!" >}}
+
+::: {.callout-warning}
+## Hardware validation is a separate gate
+These are installation and test instructions, not a claim of CUDA hardware
+validation. Check the [recorded results](test-results.qmd). A skipped GPU test,
+CPU parity test, or successfully imported CUDA package is not a passing CUDA run.
+:::
+
+## Cluster and hardware CI {#sec-hardware-ci}
+
+`examples/slurm-cuda.sh` launches one node with one GPU and threaded CPU
+support. Adapt its account, partition, resource request, and job time to the
+cluster. Bootstrap once before submitting, keep output on a sufficiently large
+filesystem, and use a different run directory for every realization. Multiple
+GPUs are not automatically combined into one simulation.
+
+The manual **GPU hardware validation** GitHub Actions workflow uses a
+self-hosted runner with labels `pmf-glm` and either `metal` or `cuda`. It runs
+backend parity, full chemistry/photon/gravity smoke, and a warm MHD benchmark,
+then uploads the actual evidence and resolved environment. It is dispatched
+explicitly; pull requests do not execute on private GPU hosts. CPU CI runs
+Linux/macOS with one and four threads. Configure a runner only after testing
+the same local commands on that hardware.
+
+## Selecting FFTs {#sec-fft-selection}
+
+`[physics] fft="auto"` maps to `MHD_FFT=auto`. The extracted runner chooses
+the **native real-FFT interface on all three backends**. Its internal/log label
+is historically `mps`: this means MPSGraph on Metal, FFTW on CPU, and cuFFT on
+CUDA, not Apple code running on an NVIDIA card. `mps`, `native`, and `rfft` are
+aliases for that same native interface. `ka` is the portable real-FFT gravity
+solver; `c2c` is the full-complex portable alternative.
+{{< src "src/production/runner.jl" "function _fft_mode" >}}
+
+Metal rejects a non-MPS gravity selection unless
+`MHD_ALLOW_NON_MPS_FFT=1` is explicitly set. Such changes are benchmark
+experiments. Preserve the transform choice, Green function, grid, precision,
+thread count, and device information in every performance or parity comparison.

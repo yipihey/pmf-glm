@@ -1,0 +1,65 @@
+[run]
+n = 32
+backend = "metal"
+cfl = 0.2
+reconstruction = "ppm"
+riemann = "hlld"
+max_cycles = 3000000
+print_every = 1000
+checkpoint_final = true
+
+[cosmology]
+zstart = 3200
+zend = 3190.0
+box_ckpc_h = 1
+h = 0.674
+omega_m = 0.315
+omega_b = 0.05366655
+omega_r = 9.13541547429316e-05
+omega_lambda = 0.6849086458452571
+
+[magnetic]
+initial_condition = "meanfield_linear"
+b0_ng = 0.3
+
+[chemistry]
+mode = "mixing"
+helium = true
+expansion = "on"
+coupling = "strang"
+hydrogen_storage = "centered"
+smoothing = "local"
+ionized_fast_zmin = 0
+x_hii_initial = 0.9999999997524076
+velocity_unit_cms = 143129.99384492624
+
+[physics]
+gravity = true
+gas_gravity = true
+compton_drag = true
+drag_mode = "radiation"
+photon_response = "moments_exponential"
+nonlinear_cfl = 0.1
+glm_project_every = 8
+pressure = 57.32241732192102
+
+[diagnostics]
+redshifts = [3200.0, 3197.5, 3195.0, 3192.5, 3190.0]
+angle_bins = 1
+spectrum_bins = 16
+energy_ledger_every = 1
+
+[environment]
+MHD_INITIAL_STATE_DIR = "/Users/tabel/Projects/pmf-glm/results/release-mode-metal/handoff"
+MHD_MEANFIELD_THETA = 0.7853981633974483
+MHD_MEANFIELD_PERT_FRAC = 0.025
+MHD_MEANFIELD_POLARIZATION = "magnetosonic"
+MHD_PMF_KMODE = 1
+MHD_PMF_NORMALIZATION_Z = 3200
+MHD_CHEM_FH = 0.7546
+MHD_CHEM_FALPHA = 0
+MHD_CHEM_ALLOW_LOCAL_MIXING = 1
+MHD_RADIATION_MAGNETIC_COMPENSATION = 1
+MHD_RADIATION_FREE_STREAM_TOL = 0
+MHD_DRAG_HELIUM_ELECTRONS = 1
+MHD_PROFILE_SKIP_CYCLES = 5

@@ -1,0 +1,3 @@
+cycle	measured	z	a	brms	divBdx_over_brms	delta_b_rms	delta_dm_rms	xHII_mean	xHII_min	xHII_max	fH2_mean	fH2_min	fH2_max	xHeII_mean	xHeII_min	xHeII_max	xe_total_mean	xe_total_min	xe_total_max	btrans_rms	btrans_ratio	delta2k_amp	p_mean	p_min	p_max	eint_mean	eint_min	eint_max	temperature_mean	temperature_min	temperature_max
+0	0	1200	0.0008326394671107411	1	1e-8	0	0	0.4	0.4	0.4	NaN	NaN	NaN	0	0	0	0.4	0.4	0.4	0.01	1	0	1	1	1	1.5	1.5	1.5	3272.725	3272.725	3272.725
+10	10	1100	0.0009082652134423251	0.9	1e-8	0.01	0.005	0.2	0.19	0.21	NaN	NaN	NaN	0	0	0	0.2	0.19	0.21	0.009	0.9	0.01	1	0.99	1.01	1.5	1.4	1.6	3000	2990	3010

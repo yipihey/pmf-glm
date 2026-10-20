@@ -1,0 +1,168 @@
+---
+title: "Outputs, analysis, and restart"
+---
+
+## Run directory {#sec-run-directory}
+
+Every run gets its own explicit `--output` directory. The facade writes
+metadata before starting the child and updates completion/failure status when
+the process exits.
+{{< src "src/provenance.jl" "function run_simulation" >}}
+
+| File | Contents |
+|---|---|
+| `metadata.toml` | Input configuration, source fingerprint, Julia/system details, manifest hash, status, wall time |
+| `Project.toml`, `Manifest.toml` | Copies of the active environment declarations/manifest when present |
+| `resolved-environment.toml` | All facade-resolved solver options and output paths |
+| `run.log` | Solver stdout/stderr, stage timings, warnings, diagnostic summaries |
+| `history.tsv` | Small redshift/time histories |
+| `spectra.tsv` | Shell/angle power tables with explicit field labels and mode counts |
+| `pdfs.tsv` | Gas/DM density histograms |
+| `modes.tsv` | Matched-mode Fourier diagnostics where enabled |
+| `performance.tsv` | Run-level phase averages and model/initialization metadata |
+| `checkpoint.jls` | Restart state, only when checkpoint writing is enabled |
+
+Files can be absent when their diagnostic is disabled or a run fails before
+its first output. A path in the resolved configuration does not prove a file
+was written. Check `metadata.toml`, the log, and the final achieved redshift.
+
+`COMPLETED` means the requested trajectory reached its target. A cosmological
+run that exits successfully at a cycle budget before `zend` is
+`STOPPED_AT_LIMIT`, not completed science. `INCOMPLETE` denotes a missing final
+redshift record; `FAILED` denotes an execution error. Do not treat exit code
+zero or a final diagnostic file alone as proof the endpoint was reached.
+{{< src "src/provenance.jl" "function _completion_status" >}}
+
+## Histories and cadence {#sec-histories}
+
+`history.tsv` includes `cycle`, `measured`, `z`, `a`, `brms`,
+`divBdx_over_brms`, `delta_b_rms`, `delta_dm_rms`, mean/min/max abundances,
+`xe_total`, transverse-mode diagnostics, pressure, internal energy, and
+temperature statistics. `brms` is in **code units**, temperature is K, and
+disabled physical channels may appear as `NaN`; do not substitute zero.
+{{< src "src/production/runner.jl" "function _write_history!" >}}
+
+`diagnostics.redshifts` requests common comparison epochs;
+`diagnostics.every` sets a cycle cadence. Adaptive histories can add samples
+where density/ionization changes. Initial spectra require `MHD_INITIAL_PK=1`
+(enabled by the facade); final diagnostics are enabled by default. Use the
+actual `z` column for alignment rather than assuming the same cycle means the
+same physical epoch.
+
+## Power spectra {#sec-power-spectra}
+
+The shared TSV schema is
+
+```text
+field cycle measured z a kbin mubin k mu_lo mu_hi P Nmodes
+```
+
+`Nmodes=0` bins are empty, not zero power measurements. Gas/DM density,
+magnetic vector, photon density, and magnetic force spectra use one isotropic
+mu bin. Photon velocity and photon-baryon slip can retain angular bins.
+Vector power sums components; it is not a single-component spectrum.
+{{< src "src/production/runner.jl" "function _write_pkmu!" >}}
+{{< src "lib/PoissonKernels/src/gpu_fft.jl" "power_spectrum_aniso_gpu" >}}
+
+`B_pressure_force`, `B_tension_force`, and `B_lorentz_force` use the Maxwell
+split in @eq-maxwell. Recover their cross spectrum using
+
+$$
+2P_{PT}=P_L-P_P-P_T.
+$$ {#eq-cross-spectrum}
+
+Changing cancellation between pressure and tension can alter total force
+power even when each auto-spectrum changes little. Density/particle mesh
+spectra are estimator outputs: do not presume a shot-noise subtraction or
+CIC-window deconvolution that is not explicitly performed by the implementation.
+Fix `MHD_PK_KMAX` and bin counts across grids for common physical edges.
+
+The numeric `k` follows `MHD_BOXSIZE`, which defaults to **1**. The physical
+TOML box does not by itself change that diagnostic option. Convert the axes
+and volume normalization using [notation](notation.qmd#sec-wavenumbers).
+
+## PDFs and images {#sec-plots}
+
+The density PDF is per unit `log10(rho)` with normalization by total grid
+cells and bin width. Its schema includes `field`, epoch, bin edges,
+`rho_mid`, `count`, and `pdf`. Check histogram support before interpreting tails;
+do not compare a log-density PDF directly to a PDF per unit linear density.
+
+Optional `MHD_DENSITY_FRAME_DIR` and `MHD_DENSITY_FRAME_ZS` request density
+frames. `MHD_FINAL_B_DIR` writes a final magnetic-field payload. These are
+separate from the small summary tables and can add substantial transfers and
+storage. The Python tools under `tools/analysis` consume the actual TSV schemas;
+their command-line help and `tools/README.md` describe supported plots.
+
+```sh
+uv sync --extra test
+# A cosmological run can infer units from its metadata:
+uv run pmf-analyze results/cosmology-first
+# Explicit physical units and a separate output directory:
+uv run pmf-analyze results/first --output results/first-analysis \
+  --length-unit box \
+  --box-ckpc-h 1 --spectral-boxsize 1 --hubble 0.674
+```
+
+With a run-directory argument, tables are discovered automatically and the
+default plot directory is `RUN_DIR/analysis`. Metadata supplies units for a
+cosmological run when available; explicit flags override inference. The unit
+flags in the second command explicitly assign a 1 ckpc/h physical box to the otherwise
+dimensionless smoke case; replace them with the actual experiment's values.
+For the cosmological example, use its configured `box_ckpc_h`, `h`, and any
+`MHD_BOXSIZE` override. The command writes PDF/PNG diagnostics and an input-hash
+record; it does not convert code magnetic/force amplitudes into cgs silently.
+
+For optional density frames:
+
+```sh
+uv run python -m tools.analysis.render_density_frames path/to/frames \
+  results/frame-plots --box-ckpc-h 1 --hubble 0.674 --log-min -2 --log-max 2
+```
+
+The two panels are a central density slice and a line-of-sight **maximum**, not
+an integrated column density. Fixed color limits support epoch-to-epoch
+comparison; supplied physical box units label axes in comoving kpc without h.
+
+Keep raw tables alongside generated figures. Plot captions should state the
+field, actual redshift, physical units, band/window, normalization, and whether
+the plotted quantity is `P(k)` or dimensionless `k^3 P/(2*pi^2)`.
+
+## Checkpoints and restart {#sec-restart}
+
+Enable checkpointing in the original configuration:
+
+```toml
+[run]
+checkpoint_every = 100
+checkpoint_final = true
+resume = false
+```
+
+To continue, change `resume=true`, preserve all evolution settings, and rerun
+against the same output directory. Extending `cosmology.zend` is allowed by
+the driver; changing its physical history is not generally compatible.
+The wrapper additionally rejects a changed source fingerprint.
+
+```sh
+julia --project=. -t auto scripts/run_pmf.jl path/to/resume.toml \
+  --backend=cpu --output=results/my-run
+```
+
+The checkpoint writer streams fields through host arrays to a temporary file,
+then renames it. It stores configuration, runtime counters/clocks, MHD fields,
+particle and chemistry state, and active photon/compensation payloads. Restore
+checks field ordering, shape, type, and configuration compatibility.
+{{< src "src/production/runner.jl" "function _write_pmf_checkpoint" >}}
+{{< src "src/production/runner.jl" "function _restore_pmf_checkpoint!" >}}
+
+Julia Serialization is a restart mechanism, **not** a long-term portable
+archive or an untrusted-file format. Keep the Julia version, manifest, source,
+and metadata with a checkpoint; never deserialize untrusted files. The code's
+legacy/override migration paths are expert operations, not a promise of
+cross-version or cross-backend portability.
+
+Restart logs/tables can append to earlier outputs. Check for repeated epochs
+and preserve pre-resume metadata when publishing an audit trail. Validate a
+continuous versus split/resumed trajectory before relying on a new checkpoint
+configuration.

@@ -1,0 +1,52 @@
+name: GPU hardware validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: Backend on a registered self-hosted runner
+        type: choice
+        options: [metal, cuda]
+        required: true
+      threads:
+        description: Julia CPU threads
+        default: '4'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hardware-${{ inputs.backend }}
+  cancel-in-progress: false
+
+jobs:
+  hardware:
+    runs-on: [self-hosted, pmf-glm, '${{ inputs.backend }}']
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.12'
+      - name: Bootstrap selected GPU
+        run: julia --project=. --threads=${{ inputs.threads }} scripts/bootstrap.jl --backend=${{ inputs.backend }}
+      - name: Operator and CPU-device parity gates
+        run: julia --project=environments/${{ inputs.backend }} --threads=${{ inputs.threads }} scripts/validate.jl --backend=${{ inputs.backend }}
+      - name: Full coupled smoke run
+        run: julia --project=environments/${{ inputs.backend }} --threads=${{ inputs.threads }} scripts/run_pmf.jl examples/cosmology-smoke.toml --backend=${{ inputs.backend }} --output=results/ci-gpu-cosmology
+      - name: Warm MHD benchmark
+        run: julia --project=environments/${{ inputs.backend }} --threads=${{ inputs.threads }} scripts/benchmark.jl --backend=${{ inputs.backend }} --n=128 --iterations=30 --output=docs/data/benchmark-${{ inputs.backend }}.toml
+      - name: Complete-state restart parity
+        run: julia --project=environments/${{ inputs.backend }} --threads=${{ inputs.threads }} scripts/validate_production.jl --backend=${{ inputs.backend }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hardware-${{ inputs.backend }}
+          path: |
+            docs/data/validation*
+            docs/data/benchmark-*.toml
+            docs/data/production-*.toml
+            environments/*/Manifest.toml
+            results/ci-gpu-cosmology/metadata.toml
+            results/ci-gpu-cosmology/run.log

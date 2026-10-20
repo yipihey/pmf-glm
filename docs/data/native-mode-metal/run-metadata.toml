@@ -1,0 +1,151 @@
+active_project = "/Users/tabel/Projects/pmf-glm/environments/metal/Project.toml"
+architecture = "aarch64"
+created_utc = "2026-10-20T16:40:00.366"
+finished_utc = "2026-10-20T16:41:13.872"
+julia_threads = 4
+julia_version = "1.12.6"
+kernel = "Darwin"
+machine = "PHY-FD69NP6NG2"
+manifest_sha256 = "3c971781a36a46e051d16e2012b9c4239a46f4bbad773d1883c2142dd629cea6"
+schema_version = 1
+source_fingerprint_sha256 = "c451ae02643b584381c05bf505b0f4eb3c1a9e735fc635776bf78f918d84dbd1"
+status = "COMPLETED"
+wall_seconds = 73.11526989936829
+
+[configuration.chemistry]
+coupling = "strang"
+expansion = "on"
+helium = true
+hydrogen_storage = "centered"
+ionized_fast_zmin = 0
+mode = "mixing"
+smoothing = "local"
+velocity_unit_cms = 143129.99384492624
+x_hii_initial = 0.9999999997524076
+
+[configuration.cosmology]
+box_ckpc_h = 1
+h = 0.674
+omega_b = 0.05366655
+omega_lambda = 0.6849086458452571
+omega_m = 0.315
+omega_r = 9.13541547429316e-5
+zend = 3190.0
+zstart = 3200
+
+[configuration.diagnostics]
+angle_bins = 1
+energy_ledger_every = 1
+redshifts = [3200.0, 3197.5, 3195.0, 3192.5, 3190.0]
+spectrum_bins = 16
+
+[configuration.environment]
+MHD_CHEM_ALLOW_LOCAL_MIXING = 1
+MHD_CHEM_FALPHA = 0
+MHD_CHEM_FH = 0.7546
+MHD_DRAG_HELIUM_ELECTRONS = 1
+MHD_INITIAL_STATE_DIR = "/Users/tabel/Projects/pmf-glm/results/release-mode-metal/handoff"
+MHD_MEANFIELD_PERT_FRAC = 0.025
+MHD_MEANFIELD_POLARIZATION = "magnetosonic"
+MHD_MEANFIELD_THETA = 0.7853981633974483
+MHD_PMF_KMODE = 1
+MHD_PMF_NORMALIZATION_Z = 3200
+MHD_PROFILE_SKIP_CYCLES = 5
+MHD_RADIATION_FREE_STREAM_TOL = 0
+MHD_RADIATION_MAGNETIC_COMPENSATION = 1
+
+[configuration.magnetic]
+b0_ng = 0.3
+initial_condition = "meanfield_linear"
+
+[configuration.physics]
+compton_drag = true
+drag_mode = "radiation"
+gas_gravity = true
+glm_project_every = 8
+gravity = true
+nonlinear_cfl = 0.1
+photon_response = "moments_exponential"
+pressure = 57.32241732192102
+
+[configuration.run]
+backend = "metal"
+cfl = 0.2
+checkpoint_final = true
+max_cycles = 3000000
+n = 32
+print_every = 1000
+reconstruction = "ppm"
+riemann = "hlld"
+
+[environment]
+MHD_BACKEND = "metal"
+MHD_CFL = "0.2"
+MHD_CHECKPOINT_FINAL = "true"
+MHD_CHECKPOINT_PATH = "/Users/tabel/Projects/pmf-glm/results/release-mode-metal/run/checkpoint.jls"
+MHD_CHECKPOINT_RESUME = "false"
+MHD_CHEM = "mixing"
+MHD_CHEM_ALLOW_LOCAL_MIXING = "1"
+MHD_CHEM_COUPLING = "strang"
+MHD_CHEM_EXPANSION = "on"
+MHD_CHEM_FALPHA = "0"
+MHD_CHEM_FH = "0.7546"
+MHD_CHEM_HELIUM = "true"
+MHD_CHEM_H_STORAGE = "centered"
+MHD_CHEM_IONIZED_FAST_ZMIN = "0"
+MHD_CHEM_SMOOTH = "local"
+MHD_CHEM_SMOOTH_SIGMA_CELLS = "8"
+MHD_CHEM_VUNIT = "143129.99384492624"
+MHD_COMPTON_DRAG = "true"
+MHD_COSMOLOGICAL_MHD_SCALING = "jedamzik"
+MHD_CYCLE_PRINT_EVERY = "100"
+MHD_DRAG_DT_MODE = "radiation"
+MHD_DRAG_HELIUM_ELECTRONS = "1"
+MHD_FFT = "auto"
+MHD_FINAL_DIAG = "1"
+MHD_GLM_PROJECT_EVERY = "8"
+MHD_GRAVITY = "true"
+MHD_GRAVITY_GAS_KICK = "true"
+MHD_H = "0.674"
+MHD_HISTORY_TSV = "/Users/tabel/Projects/pmf-glm/results/release-mode-metal/run/history.tsv"
+MHD_INITIAL_PK = "1"
+MHD_INITIAL_STATE_DIR = "/Users/tabel/Projects/pmf-glm/results/release-mode-metal/handoff"
+MHD_MAX_CYCLES = "3000000"
+MHD_MEANFIELD_PERT_FRAC = "0.025"
+MHD_MEANFIELD_POLARIZATION = "magnetosonic"
+MHD_MEANFIELD_THETA = "0.7853981633974483"
+MHD_MODE_HISTORY_TSV = "/Users/tabel/Projects/pmf-glm/results/release-mode-metal/run/modes.tsv"
+MHD_OB = "0.05366655"
+MHD_OL = "0.6849086458452571"
+MHD_OM = "0.315"
+MHD_OR = "9.13541547429316e-5"
+MHD_OUT_TSV = "/Users/tabel/Projects/pmf-glm/results/release-mode-metal/run/performance.tsv"
+MHD_P0 = "57.32241732192102"
+MHD_PARTICLE_MAX_DISP_CELLS = "1"
+MHD_PDF_TSV = "/Users/tabel/Projects/pmf-glm/results/release-mode-metal/run/pdfs.tsv"
+MHD_PK_NBINS = "16"
+MHD_PK_NMU = "1"
+MHD_PK_TSV = "/Users/tabel/Projects/pmf-glm/results/release-mode-metal/run/spectra.tsv"
+MHD_PK_ZS = "3200.0,3197.5,3195.0,3192.5,3190.0"
+MHD_PMF_B0_NG = "0.3"
+MHD_PMF_INIT = "meanfield_linear"
+MHD_PMF_KMODE = "1"
+MHD_PMF_N = "32"
+MHD_PMF_NORMALIZATION_Z = "3200"
+MHD_PRECISION = "f32"
+MHD_PRINT_EVERY = "1000"
+MHD_PROFILE_SKIP_CYCLES = "5"
+MHD_RADIATION_ENERGY_LEDGER_EVERY = "1"
+MHD_RADIATION_FREE_STREAM_TOL = "0"
+MHD_RADIATION_MAGNETIC_COMPENSATION = "1"
+MHD_RADIATION_MAX_DLNA = "2.5e-4"
+MHD_RADIATION_NONLINEAR_CFL = "0.1"
+MHD_RADIATION_RESPONSE_MODEL = "moments_exponential"
+MHD_RECON = "ppm"
+MHD_RIEMANN = "hlld"
+MHD_STEPS = "4"
+MHD_TERMINAL_LBOX_CKPC = "1.4836795252225519"
+MHD_WARMUP = "0"
+MHD_XHII_INIT = "0.9999999997524076"
+MHD_ZEND = "3190.0"
+MHD_ZSTART = "3200"

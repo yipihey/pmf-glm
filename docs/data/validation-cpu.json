@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "backend": "cpu",
+  "status": "PASS",
+  "assertions_passed": 99189,
+  "wall_seconds": 107.45859604200814,
+  "returncode": 0,
+  "created_utc": "2026-10-20T16:43:12.527106+00:00",
+  "machine": "PHY-FD69NP6NG2",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "threads": 4,
+  "source_fingerprint_sha256": "185c89cd31cf2e2753ab5afeba29a12fa843144e9dd3dc11811e4be7bbe0151f",
+  "command": [
+    "/Users/tabel/.julia/juliaup/julia-1.12.6+0.aarch64.apple.darwin14/bin/julia",
+    "--project=/Users/tabel/Projects/pmf-glm",
+    "--threads=4",
+    "/Users/tabel/Projects/pmf-glm/test/runtests.jl"
+  ],
+  "log": "validation-cpu.log",
+  "scope": "current standalone extraction; automated numerical/operator tests"
+}

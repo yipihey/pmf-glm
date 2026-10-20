@@ -1,0 +1,10 @@
+schema_version = 1
+status = "SYNTHETIC_TEST_FIXTURE"
+
+[configuration.cosmology]
+box_ckpc_h = 1.0
+h = 0.674
+
+[environment]
+MHD_TERMINAL_LBOX_CKPC = "1.4836795252225519"
+MHD_BOXSIZE = "1.0"

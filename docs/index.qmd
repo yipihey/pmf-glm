@@ -1,0 +1,68 @@
+---
+title: "PMFGLM.jl"
+---
+
+Single-node primordial magnetic-field simulations with full GLM magnetohydrodynamics,
+particle gravity, photon-baryon response, and primordial chemistry. Julia and
+KernelAbstractions share the numerical kernels across parallel CPU, Apple Metal,
+and NVIDIA CUDA. The package bundles its source dependencies; no Vespa checkout,
+private registry, or sibling science repository is required.
+
+## Start here {#sec-start}
+
+```sh
+git clone https://github.com/yipihey/pmf-glm.git
+cd pmf-glm
+julia --project=. -t auto scripts/bootstrap.jl --backend=cpu
+julia --project=. -t auto scripts/run_pmf.jl examples/smoke.toml \
+  --output=results/first --backend=cpu
+```
+
+The [installation guide](getting-started.qmd) targets a first small CPU run in
+about five minutes after Julia is installed; dependency downloads and first
+compilation can take longer. For Apple Silicon or NVIDIA, follow the separate
+[GPU setup](backends.qmd) before changing the backend.
+
+| Your question | Read |
+|---|---|
+| Can I run this on my machine? | [Installation](getting-started.qmd), [backends](backends.qmd) |
+| What equations and units are evolved? | [Physics](physics.qmd), [notation](notation.qmd) |
+| How do I preserve a PMF realization between resolutions? | [Initial conditions](initial-conditions.qmd) |
+| What does a run write, and how do I restart it? | [Outputs](outputs.qmd) |
+| What has actually passed here? | [Recorded test results](test-results.qmd) |
+| How can I make a defensible science comparison? | [Validation protocol](validation.qmd) |
+| Where should I change a kernel or add a test? | [Development](development.qmd), [architecture](architecture.qmd) |
+
+## Scope {#sec-scope}
+
+The research runner retains nonlinear finite-volume MHD throughout radiation
+coupling. The photon model evolves a monopole and velocity with an algebraic
+stress closure: it is **not a full polarized Boltzmann hierarchy**. Gaussian
+Lyman-alpha mixing and response-table chemistry are model approximations, not
+three-dimensional line radiative transfer. See the [science boundary](validation.qmd#sec-limitations).
+
+::: {.callout-warning}
+## Evidence belongs to a revision
+Inherited tests, historical Metal runs, and Schiff comparison tools describe
+lineage, not certification of this extraction. CUDA support in the source does
+not establish CUDA hardware validation. Only the [evidence page](test-results.qmd)
+reports measurements supplied with this documentation build.
+:::
+
+## Package surface {#sec-package-surface}
+
+The public facade exposes configuration and run orchestration, plus selected MHD
+operations. The bundled `MHDKernels`, `PoissonKernels`, `ChemistryKernels`, and
+`EmissionKernels` remain accessible through `PMFGLM`.
+{{< src "src/PMFGLM.jl" "module PMFGLM" >}}
+
+```julia
+using PMFGLM
+config = load_config("examples/cosmology-smoke.toml")
+resolved = run_environment(config; output_dir="results/inspect")
+run_simulation(config; output_dir="results/cosmology-first")
+```
+
+Use a new directory per experiment. The runner records the resolved options,
+source fingerprint, dependency-manifest hash, execution log, and completion
+status. A completed short run is an installation check, not a convergence result.

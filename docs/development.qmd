@@ -1,0 +1,110 @@
+---
+title: "Collaborator workflow"
+---
+
+## Working agreement {#sec-working-agreement}
+
+Start with the small CPU case, run the tests, and read the physics/notation
+pages before changing units or clocks. Keep one physical change per comparison.
+Preserve failed runs and negative results. Do not change an acceptance tolerance
+after seeing a discrepancy without documenting why.
+
+The four libraries are bundled source packages, not disposable caches. A
+kernel change belongs under the owning `lib/` package; configuration and run
+orchestration belong under `src/`; command-line wrappers belong under `scripts/`.
+Do not introduce hidden sibling-checkout or machine-specific paths.
+
+## Local development loop {#sec-development-loop}
+
+```sh
+julia --project=. -t auto scripts/bootstrap.jl --backend=cpu
+julia --project=. -t auto test/runtests.jl
+julia --project=. -t auto scripts/run_pmf.jl examples/cosmology-smoke.toml \
+  --backend=cpu --output=results/change-check
+uv sync --extra test
+uv run python -m unittest discover -s test/python -v
+```
+
+Add a regression test next to the behavior you change. Numerical work should
+include a controlled solution/limit, a resolution or timestep comparison where
+relevant, positivity/conservation diagnostics, and backend parity at comparable
+precision. A long run without a crash does not replace a small diagnostic test.
+
+For a GPU change, bootstrap its optional environment and run
+`scripts/test_gpu.jl` on real hardware. Avoid running another all-memory GPU
+campaign concurrently. Record unavailable devices as untested.
+
+## Kernel conventions {#sec-kernel-conventions}
+
+- Keep device computations allocation-free and precision-generic where the
+  algorithm supports it. Avoid implicit Float64 constants in a Float32-only
+  Metal path.
+- Preserve conserved/primitive variable ordering, grid staggering, boundary
+  conditions, derivative symbols, and transform normalization.
+- Synchronize for timings and host reads; asynchronous launches alone cannot
+  establish elapsed compute time or a valid output state.
+- Keep the cube/reference paths consistent when changing reconstruction,
+  Riemann dispatch, or source-aware updates.
+- Test reductions, view offsets, channel batching, and cache/device ownership
+  explicitly when changing transform code.
+- Report source-cadence, positivity fallback, projection, and thermal-floor
+  changes as numerical changes, not just optimizations.
+
+## A reproducible contribution {#sec-contribution-record}
+
+Include the source fingerprint, Julia version, dependency manifest, backend and
+hardware, exact command, input TOML, resolved environment, output epochs,
+comparison observables, tolerances, and raw evidence. For performance, include
+the [measurement definition](performance.qmd#sec-performance-definitions).
+
+For an issue, supply a minimal configuration, `run.log`, metadata, expected and
+observed behavior, and whether it reproduces on CPU. Remove private paths or
+data before publishing logs. Never upload large checkpoints as ordinary Git
+blobs; use an appropriately licensed archived dataset and record its checksum.
+
+## Documentation build {#sec-doc-build}
+
+Requires Quarto 1.7+ and Python 3.11+. From the repository root:
+
+```sh
+python3 -m unittest discover -s docs/scripts -p 'test_*.py'
+quarto render docs --fail-if-warnings
+python3 docs/scripts/check_links.py docs/_site
+quarto preview docs --no-browser
+```
+
+The render pre-hook builds revision metadata, checked local source pages, the
+complete driver-option index, and evidence includes. Julia is **not** rerun by
+rendering. The link checker validates local pages, assets, and fragments; it
+does not promise that remote literature or repository URLs are reachable.
+
+Every evaluated equation needs a checked `src` link. Tests are linked as
+**test source**, not marked as passing unless an actual evidence record supports
+that conclusion. Make linked sections/equations explicit anchors. Keep notation,
+limitations, and status current when behavior changes. The actual adaptation
+of the Quadrant template is recorded in `docs/README.md`.
+
+## Pages deployment {#sec-pages}
+
+`.github/workflows/pages.yml` tests documentation tooling, renders the book,
+checks local links, uploads `docs/_site`, and deploys the Pages artifact on main.
+Pull requests build and check without deploying. It does not push a `gh-pages`
+branch or execute numerical validation on GitHub-hosted hardware.
+
+A repository maintainer must select **GitHub Actions** as the Pages source and
+allow the `github-pages` environment deployment. No local documentation command
+changes repository settings. The workflow follows the
+[GitHub custom-workflow deployment contract](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)
+and [Quarto's GitHub Pages guidance](https://quarto.org/docs/publishing/github-pages.html).
+
+## Updating extracted sources {#sec-refresh}
+
+Source provenance is recorded in `provenance/extraction.json`; portable Python
+tools maintain a separate `tools/reference/provenance.json`. Retain upstream
+attribution, source hashes, and working-tree modifications. Refresh an extracted
+component deliberately and review its diff; do not overwrite local scientific
+fixes or regenerate unrelated files as part of a docs change.
+
+Before a release, resolve the [license and attribution boundary](status.qmd#sec-attribution),
+rerun current extraction tests, collect each hardware record you intend to claim,
+and archive the full science-convergence artifacts separately from unit tests.

@@ -1,0 +1,80 @@
+---
+title: "Performance and memory"
+---
+
+## Measure the quantity you mean {#sec-performance-definitions}
+
+| Quantity | Definition and exclusions |
+|---|---|
+| Warm MHD throughput | `N^3 * iterations / elapsed / 1e6` MCell/s; synchronized timed MHD loop only |
+| Phase-average seconds | Sum of a named synchronized production phase divided by measured cycles |
+| Production phase total | Sum of the reported phases; not all process wall time |
+| End-to-end wall time | Wrapper child-process interval, including startup and output work in that interval |
+| Simulation progress | Redshift/physical time reached per wall time under the exact chosen model and tolerances |
+
+A fast bare MHD kernel is not the speed of full chemistry, radiation, gravity,
+spectral diagnostics, or checkpointing. A large timestep can improve progress
+while changing the trajectory. Report accuracy controls with performance.
+
+## Reproducible kernel benchmark {#sec-kernel-benchmark}
+
+```sh
+julia --project=. -t auto scripts/benchmark.jl --backend=cpu --n=32 \
+  --iterations=10 --output=docs/data/benchmark-cpu.toml
+julia --project=environments/metal -t auto scripts/benchmark.jl \
+  --backend=metal --n=32 --iterations=10 --output=docs/data/benchmark-metal.toml
+julia --project=environments/cuda -t auto scripts/benchmark.jl \
+  --backend=cuda --n=32 --iterations=10 --output=docs/data/benchmark-cuda.toml
+```
+
+Run only the relevant backend after bootstrap. The benchmark warms the operator,
+resets its initial field before timing, and synchronizes at completion. CPU
+uses the reference integrator and GPU uses the cube path; this is not identical
+machine instruction work. Record integrator, grid, iterations, Julia threads,
+hardware, version, source hash, and scope with the throughput.
+{{< src "scripts/benchmark.jl" "Warm compilation" >}}
+
+For physical trajectories the production runner must not advance uncounted
+warmup states at a frozen cosmological time. Keep `MHD_WARMUP=0`; use
+`MHD_PROFILE_SKIP_CYCLES` to omit startup cycles from timing while preserving
+the evolved physical history.
+
+## Recorded measurements {#sec-benchmark-evidence}
+
+The following records are loaded from `benchmark*.json`/`benchmark*.toml`,
+including an aggregate `benchmarks.json` when provided. Missing evidence is
+not a zero or an implied speed comparison.
+
+{{< prepared "benchmark" >}}
+
+## Production profiles {#sec-production-profiles}
+
+`performance.tsv` and the log separate CFL, bare MHD, radiation, GLM projection,
+drag, chemistry, deposit, density assembly, FFT, gas gravity, and particle push.
+Radiation predictor/corrector/ledger and optional chemistry subdivisions are
+**nested breakdowns**, not extra phases to add again to the total.
+{{< src "src/production/runner.jl" "function _time_phase" >}}
+
+Fix diagnostic cadence and final outputs in comparisons. Portable spectrum
+fallbacks may transfer full transformed grids to the host, while optimized
+Metal spectrum binning remains on-device; the same table schema does not imply
+the same overhead. FFT planning, allocation caches, data transfers, and initial
+compilation must be distinguished from steady state.
+
+## Memory budgeting {#sec-memory}
+
+The nine Float32 MHD state arrays alone use 36 bytes/cell, excluding integrator
+scratch, particles, gravity, chemistry, transforms, and diagnostics. For a
+cubic grid the base four-channel radiation workspace approaches 32 bytes/cell
+and four persistent half-complex photon fields add about 16 bytes/cell. Optional
+three-component magnetic compensation adds 12 bytes/cell. These are component
+estimates, **not a total resident-memory prediction**.
+
+Use `MHD_MEMPROBE=1` and increasing small grids to measure the actual run.
+Check both live and peak/cached allocations, OS memory pressure, and checkpoint
+staging. Cubic scaling makes a factor-two grid refinement roughly eight times
+as costly in cell storage. Keep substantial headroom; do not infer a safe
+production grid from nominal unified memory or VRAM alone.
+
+Avoid interpreting historical upstream M5 throughput, generic CUDA estimates,
+or another package's bytes-per-cell model as a current PMFGLM measurement.

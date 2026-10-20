@@ -1,0 +1,61 @@
+# 3 pG = 0.003 nG comoving. Box is 1 ckpc/h; code box is [0,1]^3.
+# This is a research example; vary dt, grid, physical cutoff, and start redshift.
+[run]
+n = 128
+backend = "cpu"
+cfl = 0.2
+reconstruction = "ppm"
+riemann = "hlld"
+max_cycles = 100000000
+checkpoint_every = 1000
+checkpoint_final = true
+print_every = 100
+
+[cosmology]
+zstart = 10000.0
+zend = 500.0
+box_ckpc_h = 1.0
+h = 0.674
+omega_m = 0.315
+omega_b = 0.053667
+omega_lambda = 0.685
+
+[magnetic]
+b0_ng = 0.003
+seed = 42
+kcut = 25.132741228718345
+kmax = 50.26548245743669
+minimum_cells_per_wavelength = 8
+mode_lock_n = 64
+curl_symbol = "centered"
+curl_reference_n = 64
+
+[chemistry]
+mode = "mixing"
+helium = true
+coupling = "strang"
+expansion = "on"
+smoothing = "gaussian"
+smoothing_sigma_cells = 8.0
+ionized_fast_zmin = 0.0
+hydrogen_storage = "centered"
+
+[physics]
+gravity = true
+gas_gravity = true
+compton_drag = true
+drag_mode = "radiation"
+photon_response = "moments_exponential"
+nonlinear_cfl = 0.1
+pressure = "auto"
+scaling = "jedamzik"
+glm_project_every = 8
+particle_max_displacement_cells = 1.0
+
+[diagnostics]
+redshifts = [10000, 5000, 3000, 2000, 1800, 1600, 1400, 1300, 1200, 1100, 1000, 900, 800, 700, 600, 500]
+adaptive_fraction = 0.03
+angle_bins = 1
+spectrum_bins = 64
+pdf_bins = 128
+energy_ledger_every = 100
