@@ -1,5 +1,8 @@
 # Contributing
 
+Coding agents should also read [AGENTS.md](AGENTS.md) for the run/analysis
+workflow, scientific guardrails, evidence handling, and resource limits.
+
 Start with the CPU bootstrap, smoke run, and `scripts/validate.jl` from the
 README. Run `python3 -m pytest` after installing `.[test]` for the independent
 oracle and analysis tests. Optional GPU tests run only on the requested device;

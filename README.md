@@ -117,6 +117,7 @@ interval does not establish a converged long-interval result.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md), start with a small CPU case, and attach
 the configuration, source/manifest hashes, test evidence, and backend details
-to numerical changes. Keep large simulation outputs outside the code repo.
+to numerical changes. Coding agents should also follow [AGENTS.md](AGENTS.md).
+Keep large simulation outputs outside the code repo.
 The extraction history is in `provenance/extraction.json`; bundled package
 licenses and upstream attribution are retained in [NOTICE.md](NOTICE.md).
