@@ -30,6 +30,7 @@ book:
     - part: "Understand"
       chapters:
         - physics.qmd
+        - relative-velocities.qmd
         - initial-conditions.qmd
         - validation.qmd
         - test-results.qmd

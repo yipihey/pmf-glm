@@ -1,6 +1,6 @@
 export RadiationClosure, RadiationWorkspace, PhotonMomentState,
        allocate_radiation_workspace, allocate_photon_moment_state,
-       initialize_photon_moments!, reconstruct_radiation_density!, photon_moment_energy,
+       initialize_photon_moments!, photon_fields_to_workspace!, reconstruct_radiation_density!, photon_moment_energy,
        RadiationEnergyLedger, RadiationStepTiming, radiation_energy_components,
        step_radiation_godunov!, radiation_angular_response,
        radiation_mode_coefficients, radiation_free_streaming_bound
@@ -366,6 +366,23 @@ function _record_radiation_energy!(ledger::RadiationEnergyLedger,change;
     ledger
 end
 
+"""
+    rescale_photon_velocities!(photons, factor)
+
+Change the velocity units of the persistent photon dipole, leaving the density
+monopole unchanged. In Jedamzik units a freely propagating physical dipole is
+constant, so expansion from `a0` to `a1` requires `factor=sqrt(a1/a0)`.
+"""
+function rescale_photon_velocities!(photons::PhotonMomentState, factor::Real)
+    isfinite(factor) && factor > 0 ||
+        throw(ArgumentError("photon velocity rescaling must be finite and positive"))
+    T=typeof(real(zero(eltype(photons.hat_batch))))
+    view(photons.hat_batch,:,:,:,2:4) .*= T(factor)
+    KA.synchronize(KA.get_backend(photons.hat_batch))
+    photons
+end
+export rescale_photon_velocities!
+
 function _radiation_forward_batch!(hat_batch,real_batch)
     for d in axes(real_batch,4)
         _radiation_forward!(view(hat_batch,:,:,:,d),view(real_batch,:,:,:,d))
@@ -378,6 +395,18 @@ function _radiation_inverse_batch!(real_batch,hat_batch)
         _radiation_inverse!(view(real_batch,:,:,:,d),view(hat_batch,:,:,:,d))
     end
     real_batch
+end
+
+"""Inverse-transform photon fields into reusable workspace without changing evolved modes.
+
+Multidimensional c2r FFTs may destroy their complex input, including FFTW's
+out-of-place inverse. Diagnostic consumers must never transform the live state.
+"""
+function photon_fields_to_workspace!(ws::RadiationWorkspace, photons::PhotonMomentState)
+    size(ws.hat_batch) == size(photons.hat_batch) ||
+        throw(ArgumentError("photon and workspace dimensions differ"))
+    copyto!(ws.hat_batch,photons.hat_batch)
+    _radiation_inverse_batch!(ws.real_batch,ws.hat_batch)
 end
 
 function _radiation_forward_triplet!(ws::RadiationWorkspace,fields)

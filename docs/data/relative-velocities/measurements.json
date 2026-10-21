@@ -1,0 +1,286 @@
+{
+  "f32": {
+    "free_expansion": {
+      "metadata": {
+        "source_fingerprint_sha256": "9188af1ceabdd9474043193e0c949d33ed3d32872e006b4024cf9b52cc1694a7",
+        "backend": "cpu",
+        "julia_version": "1.12.6",
+        "threads": 4,
+        "scope": "controlled velocity transport; fixed ionization; chemistry off",
+        "oracle_sha256": "3c6be197e2e3f71cad122c7ee5c83dfa2d00940b9ae43ae52616e06b89e515d0",
+        "target_z": 600.0,
+        "actual_z": 600.0,
+        "precision": "Float32"
+      },
+      "velocities": {
+        "z": 600.0,
+        "vb_cms": 50041.63579228267,
+        "vc_cms": 50041.66609069216,
+        "vg_cms": 100000.03064301476,
+        "cycles": 35.0
+      }
+    },
+    "gravity_refinement_1": {
+      "metadata": {
+        "source_fingerprint_sha256": "9188af1ceabdd9474043193e0c949d33ed3d32872e006b4024cf9b52cc1694a7",
+        "backend": "cpu",
+        "julia_version": "1.12.6",
+        "threads": 4,
+        "scope": "controlled velocity transport; fixed ionization; chemistry off",
+        "oracle_sha256": "3c6be197e2e3f71cad122c7ee5c83dfa2d00940b9ae43ae52616e06b89e515d0",
+        "target_z": 1199.5,
+        "actual_z": 1199.5,
+        "precision": "Float32"
+      },
+      "velocities": {
+        "z": 1199.5,
+        "vb_cms": 1.136631702210532e-08,
+        "vc_cms": -5.336497303082277e-07,
+        "vg_cms": -7.19753663405548e-09,
+        "cycles": 2.0
+      }
+    },
+    "gravity_refinement_2": {
+      "metadata": {
+        "source_fingerprint_sha256": "9188af1ceabdd9474043193e0c949d33ed3d32872e006b4024cf9b52cc1694a7",
+        "backend": "cpu",
+        "julia_version": "1.12.6",
+        "threads": 4,
+        "scope": "controlled velocity transport; fixed ionization; chemistry off",
+        "oracle_sha256": "3c6be197e2e3f71cad122c7ee5c83dfa2d00940b9ae43ae52616e06b89e515d0",
+        "target_z": 1199.5,
+        "actual_z": 1199.5,
+        "precision": "Float32"
+      },
+      "velocities": {
+        "z": 1199.5,
+        "vb_cms": -1.9322738937579045e-07,
+        "vc_cms": -5.849321678061403e-06,
+        "vg_cms": -1.9923590680922218e-09,
+        "cycles": 4.0
+      }
+    },
+    "gravity_refinement_3": {
+      "metadata": {
+        "source_fingerprint_sha256": "9188af1ceabdd9474043193e0c949d33ed3d32872e006b4024cf9b52cc1694a7",
+        "backend": "cpu",
+        "julia_version": "1.12.6",
+        "threads": 4,
+        "scope": "controlled velocity transport; fixed ionization; chemistry off",
+        "oracle_sha256": "3c6be197e2e3f71cad122c7ee5c83dfa2d00940b9ae43ae52616e06b89e515d0",
+        "target_z": 1199.5,
+        "actual_z": 1199.5,
+        "precision": "Float32"
+      },
+      "velocities": {
+        "z": 1199.5,
+        "vb_cms": -3.8617062082602825e-06,
+        "vc_cms": 8.382205519963382e-07,
+        "vg_cms": -1.890896940452332e-08,
+        "cycles": 14.0
+      }
+    },
+    "gravity_refinement_4": {
+      "metadata": {
+        "source_fingerprint_sha256": "9188af1ceabdd9474043193e0c949d33ed3d32872e006b4024cf9b52cc1694a7",
+        "backend": "cpu",
+        "julia_version": "1.12.6",
+        "threads": 4,
+        "scope": "controlled velocity transport; fixed ionization; chemistry off",
+        "oracle_sha256": "3c6be197e2e3f71cad122c7ee5c83dfa2d00940b9ae43ae52616e06b89e515d0",
+        "target_z": 1199.5,
+        "actual_z": 1199.5,
+        "precision": "Float32"
+      },
+      "velocities": {
+        "z": 1199.5,
+        "vb_cms": -2.219273398566064e-06,
+        "vc_cms": -5.8727502028066425e-06,
+        "vg_cms": -6.573068634285825e-09,
+        "cycles": 54.0
+      }
+    },
+    "physical_drag": {
+      "metadata": {
+        "source_fingerprint_sha256": "9188af1ceabdd9474043193e0c949d33ed3d32872e006b4024cf9b52cc1694a7",
+        "backend": "cpu",
+        "julia_version": "1.12.6",
+        "threads": 4,
+        "scope": "controlled velocity transport; fixed ionization; chemistry off",
+        "oracle_sha256": "3c6be197e2e3f71cad122c7ee5c83dfa2d00940b9ae43ae52616e06b89e515d0",
+        "target_z": 600.0,
+        "actual_z": 600.0,
+        "precision": "Float32"
+      },
+      "velocities": {
+        "z": 600.0,
+        "vb_cms": 71997.22470858596,
+        "vc_cms": 50041.66609069216,
+        "vg_cms": 72961.32195138921,
+        "cycles": 35.0
+      }
+    },
+    "physical_drag_refined": {
+      "metadata": {
+        "source_fingerprint_sha256": "9188af1ceabdd9474043193e0c949d33ed3d32872e006b4024cf9b52cc1694a7",
+        "backend": "cpu",
+        "julia_version": "1.12.6",
+        "threads": 4,
+        "scope": "controlled velocity transport; fixed ionization; chemistry off",
+        "oracle_sha256": "3c6be197e2e3f71cad122c7ee5c83dfa2d00940b9ae43ae52616e06b89e515d0",
+        "target_z": 600.0,
+        "actual_z": 600.0,
+        "precision": "Float32"
+      },
+      "velocities": {
+        "z": 600.0,
+        "vb_cms": 72043.63927066623,
+        "vc_cms": 50041.66609069216,
+        "vg_cms": 72905.3613710904,
+        "cycles": 139.0
+      }
+    }
+  },
+  "f64": {
+    "free_expansion": {
+      "metadata": {
+        "source_fingerprint_sha256": "9188af1ceabdd9474043193e0c949d33ed3d32872e006b4024cf9b52cc1694a7",
+        "backend": "cpu",
+        "julia_version": "1.12.6",
+        "threads": 4,
+        "scope": "controlled velocity transport; fixed ionization; chemistry off",
+        "oracle_sha256": "3c6be197e2e3f71cad122c7ee5c83dfa2d00940b9ae43ae52616e06b89e515d0",
+        "target_z": 600.0,
+        "actual_z": 600.0,
+        "precision": "Float64"
+      },
+      "velocities": {
+        "z": 600.0,
+        "vb_cms": 50041.631973355514,
+        "vc_cms": 50041.633294313215,
+        "vg_cms": 100000.0,
+        "cycles": 35.0
+      }
+    },
+    "gravity_refinement_1": {
+      "metadata": {
+        "source_fingerprint_sha256": "9188af1ceabdd9474043193e0c949d33ed3d32872e006b4024cf9b52cc1694a7",
+        "backend": "cpu",
+        "julia_version": "1.12.6",
+        "threads": 4,
+        "scope": "controlled velocity transport; fixed ionization; chemistry off",
+        "oracle_sha256": "3c6be197e2e3f71cad122c7ee5c83dfa2d00940b9ae43ae52616e06b89e515d0",
+        "target_z": 1199.5,
+        "actual_z": 1199.5,
+        "precision": "Float64"
+      },
+      "velocities": {
+        "z": 1199.5,
+        "vb_cms": 1.104089306113855e-14,
+        "vc_cms": -5.1494053005021686e-15,
+        "vg_cms": 0.0,
+        "cycles": 2.0
+      }
+    },
+    "gravity_refinement_2": {
+      "metadata": {
+        "source_fingerprint_sha256": "9188af1ceabdd9474043193e0c949d33ed3d32872e006b4024cf9b52cc1694a7",
+        "backend": "cpu",
+        "julia_version": "1.12.6",
+        "threads": 4,
+        "scope": "controlled velocity transport; fixed ionization; chemistry off",
+        "oracle_sha256": "3c6be197e2e3f71cad122c7ee5c83dfa2d00940b9ae43ae52616e06b89e515d0",
+        "target_z": 1199.5,
+        "actual_z": 1199.5,
+        "precision": "Float64"
+      },
+      "velocities": {
+        "z": 1199.5,
+        "vb_cms": -1.9530630582742686e-15,
+        "vc_cms": 1.5419123216192934e-15,
+        "vg_cms": -9.557743976388869e-18,
+        "cycles": 4.0
+      }
+    },
+    "gravity_refinement_3": {
+      "metadata": {
+        "source_fingerprint_sha256": "9188af1ceabdd9474043193e0c949d33ed3d32872e006b4024cf9b52cc1694a7",
+        "backend": "cpu",
+        "julia_version": "1.12.6",
+        "threads": 4,
+        "scope": "controlled velocity transport; fixed ionization; chemistry off",
+        "oracle_sha256": "3c6be197e2e3f71cad122c7ee5c83dfa2d00940b9ae43ae52616e06b89e515d0",
+        "target_z": 1199.5,
+        "actual_z": 1199.5,
+        "precision": "Float64"
+      },
+      "velocities": {
+        "z": 1199.5,
+        "vb_cms": 4.710639896650676e-16,
+        "vc_cms": 3.675375911281209e-15,
+        "vg_cms": -1.6999844884539507e-17,
+        "cycles": 14.0
+      }
+    },
+    "gravity_refinement_4": {
+      "metadata": {
+        "source_fingerprint_sha256": "9188af1ceabdd9474043193e0c949d33ed3d32872e006b4024cf9b52cc1694a7",
+        "backend": "cpu",
+        "julia_version": "1.12.6",
+        "threads": 4,
+        "scope": "controlled velocity transport; fixed ionization; chemistry off",
+        "oracle_sha256": "3c6be197e2e3f71cad122c7ee5c83dfa2d00940b9ae43ae52616e06b89e515d0",
+        "target_z": 1199.5,
+        "actual_z": 1199.5,
+        "precision": "Float64"
+      },
+      "velocities": {
+        "z": 1199.5,
+        "vb_cms": -2.466469878471028e-15,
+        "vc_cms": 2.143161151433106e-15,
+        "vg_cms": -2.200247864144961e-17,
+        "cycles": 54.0
+      }
+    },
+    "physical_drag": {
+      "metadata": {
+        "source_fingerprint_sha256": "9188af1ceabdd9474043193e0c949d33ed3d32872e006b4024cf9b52cc1694a7",
+        "backend": "cpu",
+        "julia_version": "1.12.6",
+        "threads": 4,
+        "scope": "controlled velocity transport; fixed ionization; chemistry off",
+        "oracle_sha256": "3c6be197e2e3f71cad122c7ee5c83dfa2d00940b9ae43ae52616e06b89e515d0",
+        "target_z": 600.0,
+        "actual_z": 600.0,
+        "precision": "Float64"
+      },
+      "velocities": {
+        "z": 600.0,
+        "vb_cms": 71997.29121389239,
+        "vc_cms": 50041.633294313215,
+        "vg_cms": 72961.33926394375,
+        "cycles": 35.0
+      }
+    },
+    "physical_drag_refined": {
+      "metadata": {
+        "source_fingerprint_sha256": "9188af1ceabdd9474043193e0c949d33ed3d32872e006b4024cf9b52cc1694a7",
+        "backend": "cpu",
+        "julia_version": "1.12.6",
+        "threads": 4,
+        "scope": "controlled velocity transport; fixed ionization; chemistry off",
+        "oracle_sha256": "3c6be197e2e3f71cad122c7ee5c83dfa2d00940b9ae43ae52616e06b89e515d0",
+        "target_z": 600.0,
+        "actual_z": 600.0,
+        "precision": "Float64"
+      },
+      "velocities": {
+        "z": 600.0,
+        "vb_cms": 72043.70218835415,
+        "vc_cms": 50041.633294313215,
+        "vg_cms": 72905.44768899861,
+        "cycles": 139.0
+      }
+    }
+  }
+}

@@ -93,6 +93,10 @@ function _restore_pmf_checkpoint!(path::AbstractString, expected_config, arrays;
                 "PMF checkpoint configuration mismatch\n" *
                 "stored:   $(stored_config)\nexpected: $(expected_config)")
             if compatible_legacy
+                haskey(expected_config,:velocity_transport_version) &&
+                    !haskey(stored_config,:velocity_transport_version) && error(
+                        "checkpoint predates corrected photon velocity evolution; " *
+                        "restart this trajectory from a consistent initial state")
                 @warn "restoring legacy PMF checkpoint without newer fingerprint fields" missing=filter(
                     k -> !(k in stored_keys), collect(keys(expected_config)))
             elseif compatible_endpoint
@@ -3496,6 +3500,11 @@ function _radiation_closure(z,xe,h,Ob,fh,vunit,lbox_comoving_cm,
         response_model=Symbol(response_model))
 end
 
+@inline function _photon_baryon_inertia_ratio(z,h,Ob)
+    return 3*_density_unit_cgs(z,h,Ob)*_PMF_CL^2 /
+        (4*_PMF_ARAD*(_PMF_T_CMB*(1+z))^4)
+end
+
 function _radiation_scale_diagnostics(rc, n)
     kfund = 2pi
     knyquist = pi * n
@@ -3574,6 +3583,12 @@ end
 
 @inline function _hubble_momentum_decay(a0, a1, cosmological_mhd_aref)
     return isfinite(cosmological_mhd_aref) ? sqrt(a0 / a1) : 1.0
+end
+
+function _source_drag_impulse_cap(mode, user_cap, gas_gravity,
+                                  gravity_cap, slip_factor=1.0)
+    base=mode in (:aware,:semiimplicit) ? Float64(user_cap) : Inf
+    return gas_gravity ? min(base,Float64(gravity_cap)/Float64(slip_factor)) : base
 end
 
 @inline function _hydro_subinterval(dt_hydro, dtau, sub_dtau)
@@ -4025,8 +4040,11 @@ function _write_linear_mode!(path; be, s, rho_dm, scratch, N, gravity,
                              omega_b=0.049,
                              rho_dm_mean=one(eltype(rho_dm)),
                              particle_displacement_x=nothing,
-                             particle_velocity_x=nothing,
+                             particle_velocity_x=nothing, particle_velocities=nothing,
                              particle_velocity_cms_factor=NaN,
+                             particle_positions=nothing,
+                             lattice_displacements=true,
+                             physical_box_ckpc_h=NaN,
                              gas_delta=nothing, HII=nothing, H2I=nothing,
                              HeII=nothing,
                              fh=0.76f0, photon_real_batch=nothing,
@@ -4072,13 +4090,24 @@ function _write_linear_mode!(path; be, s, rho_dm, scratch, N, gravity,
                                               particle_displacement_x, N,
                                               kmode))
         end
-        if particle_velocity_x !== nothing &&
-           isfinite(particle_velocity_cms_factor)
-            particle_velocity = _device_complex_mode!(
-                be, scratch, particle_velocity_x, N, kmode,
-            )
-            push!(rows, "dm_v_x" =>
-                        particle_velocity_cms_factor * particle_velocity)
+        velocities = particle_velocities === nothing ?
+                     (particle_velocity_x === nothing ? () : (particle_velocity_x,)) :
+                     particle_velocities
+        if !isempty(velocities) && isfinite(particle_velocity_cms_factor) &&
+           particle_positions !== nothing
+            # Lorentz modes above have consumed scratch[1:3]; no evolution or
+            # FFT is in flight here. Reuse two integrator targets, distinct from
+            # the reduction scratch and all live state/particle/photon fields.
+            velocity_grid, density_grid = s.scratch[1], s.scratch[2]
+            for d in eachindex(velocities)
+                MHDKernels.deposit_particle_velocity!(velocity_grid,density_grid,
+                    particle_positions...,velocities[d];
+                    N=N,lattice_displacements=lattice_displacements)
+                mode = _device_complex_mode!(be,scratch,velocity_grid,N,kmode)
+                push!(rows,"dm_v_"*("x","y","z")[d]=>particle_velocity_cms_factor*mode)
+            end
+            empty_fraction=Float64(mapreduce(iszero,+,density_grid))/length(density_grid)
+            push!(rows,"dm_velocity_empty_fraction"=>complex(empty_fraction))
         end
     end
     if photon_real_batch !== nothing
@@ -4128,7 +4157,8 @@ function _write_linear_mode!(path; be, s, rho_dm, scratch, N, gravity,
             ))
     end
 
-    k_box = 2π * Float64(kmode) / Float64(boxsize)
+    mode_box=isfinite(physical_box_ckpc_h) ? physical_box_ckpc_h : boxsize
+    k_box = 2π * Float64(kmode) / Float64(mode_box)
     k_mpc = 1000.0 * Float64(hubble) * k_box
     exists = isfile(path)
     mkpath(dirname(path))
@@ -4149,6 +4179,7 @@ function _emit_diagnostics!(; be_p, s, ρdm, scratch, px, py, pz, vx, vy, vz,
                             N, ncells, gravity, cycle, measured, a, pk_path,
                             history_path, pdf_path, pdf_counts, pdf_loglo, pdf_loghi,
                             nmu, nbins, boxsize, axis, kmax=nothing,
+                            physical_box_ckpc_h=NaN,
                             lattice_displacements=false,
                             HII=nothing, H2I=nothing, HeII=nothing, fh=0.76f0,
                             btrans0=NaN, density_kmode=1,
@@ -4204,8 +4235,8 @@ function _emit_diagnostics!(; be_p, s, ρdm, scratch, px, py, pz, vx, vy, vz,
     photon_real_ready = false
     if !isempty(mode_history_path)
         if radiation_workspace !== nothing && radiation_photon_state !== nothing
-            MHDKernels._radiation_inverse_batch!(radiation_workspace.real_batch,
-                                                 radiation_photon_state.hat_batch)
+            MHDKernels.photon_fields_to_workspace!(radiation_workspace,
+                                                 radiation_photon_state)
             photon_real_ready = true
         end
         _write_linear_mode!(mode_history_path; be=be_p, s=s, rho_dm=ρdm,
@@ -4214,10 +4245,13 @@ function _emit_diagnostics!(; be_p, s, ρdm, scratch, px, py, pz, vx, vy, vz,
                             boxsize=boxsize, hubble=hubble, omega_b=omega_b,
                             rho_dm_mean=dm_mean,
                             particle_displacement_x=lattice_displacements ? px : nothing,
-                            particle_velocity_x=lattice_displacements ? vx : nothing,
+                            particle_velocities=(vx,vy,vz),
+                            particle_positions=(px,py,pz),
+                            lattice_displacements=lattice_displacements,
+                            physical_box_ckpc_h=physical_box_ckpc_h,
                             particle_velocity_cms_factor=
-                                lattice_displacements ?
-                                _particle_velocity_cms_per_code(a, boxsize) : NaN,
+                                isfinite(physical_box_ckpc_h) ?
+                                _particle_velocity_cms_per_code(a, physical_box_ckpc_h) : NaN,
                             gas_delta=gas_delta,
                             HII=HII, H2I=H2I, HeII=HeII, fh=fh,
                             temperature_velocity_unit2=temperature_velocity_unit2,
@@ -4303,8 +4337,8 @@ function _emit_diagnostics!(; be_p, s, ρdm, scratch, px, py, pz, vx, vy, vz,
                      cycle=cycle, measured=measured, a=a, nmu=isotropic_nmu)
     end
     if radiation_workspace !== nothing && radiation_photon_state !== nothing
-        photon_real_ready || MHDKernels._radiation_inverse_batch!(
-            radiation_workspace.real_batch, radiation_photon_state.hat_batch)
+        photon_real_ready || MHDKernels.photon_fields_to_workspace!(
+            radiation_workspace, radiation_photon_state)
         photon_delta=reshape(view(radiation_workspace.real_batch,:,:,:,1),:)
         copyto!(scratch,photon_delta)
         _write_pkmu!(pk_path,"photon_delta",
@@ -4482,6 +4516,12 @@ function main()
     drag_dt_boost >= 1 || error("MHD_DRAG_DT_BOOST must be >= 1")
     drag_max_impulse = parse(Float64, get(ENV, "MHD_DRAG_MAX_IMPULSE", "Inf"))
     drag_max_impulse > 0 || error("MHD_DRAG_MAX_IMPULSE must be positive")
+    # Gravity is a separate end-of-step kick. Bound its splitting error even
+    # when the local drag propagator itself can take arbitrarily stiff steps.
+    gravity_drag_max_impulse = parse(Float64,
+        get(ENV,"MHD_GRAVITY_DRAG_MAX_IMPULSE","0.01"))
+    isfinite(gravity_drag_max_impulse) && gravity_drag_max_impulse > 0 ||
+        error("MHD_GRAVITY_DRAG_MAX_IMPULSE must be finite and positive")
     drag_xe_env = lowercase(get(ENV, "MHD_DRAG_XE", "auto"))
     drag_xe_fixed = drag_xe_env == "auto" ? NaN : parse(Float64, drag_xe_env)
     drag_helium_electrons = get(ENV, "MHD_DRAG_HELIUM_ELECTRONS", "1") in
@@ -5368,6 +5408,7 @@ function main()
     cumulative_handoff_displacement = 0.0
     source_limited_steps = 0
     drag_impulse_limited_steps = 0
+    max_gravity_fast_impulse = 0.0
     last_terminal_diffuse_coeff = 0.0
     last_terminal_vmax = NaN
     last_induction_nsub = 0
@@ -5385,6 +5426,8 @@ function main()
     a_end = zrun ? z_to_a(zend) : NaN
 
     checkpoint_config = (
+        velocity_transport_version=2,
+        gravity_drag_max_impulse=gravity_drag_max_impulse,
         backend=BACKEND_NAME, precision=string(T), N=N, zstart=zstart, zend=zend,
         boxsize=boxsize, pmf_init=pmf_init, pmf_b0_ng=pmf_b0_ng,
         pmf_kmode=pmf_kmode,
@@ -5766,6 +5809,7 @@ function main()
                            btrans0=Float64(st.btrans0), density_kmode=pmf_kmode,
                            mode_history_path=initial_history ? mode_history_path : "",
                            mode_kmode=pmf_kmode, hubble=hub, omega_b=Ob,
+                           physical_box_ckpc_h=hub*terminal_lbox_cm/_PMF_KPC_CM,
                            radiation_workspace=radiation_workspace,
                            radiation_photon_state=radiation_photon_state,
                            neutral_hydrogen_storage=chem_neutral_hydrogen_storage,
@@ -5911,12 +5955,19 @@ function main()
             drag_impulse = _drag_impulse(gamma_drag, dtphys_source, dt, drag_rate_code)
             last_drag_f = exp(-drag_impulse)
         end
-        if drag_enabled && drag_dt_mode in (:aware, :semiimplicit) &&
-           isfinite(drag_max_impulse) && drag_impulse > drag_max_impulse
+        # For evolved photons the fast slip eigenvalue is (1+R)*Gamma, not
+        # Gamma alone. Use that stiffness in the split-gravity accuracy cap.
+        gravity_slip_factor = radiation_photon_state !== nothing ?
+            1 + _photon_baryon_inertia_ratio(a_to_z(a_after_step),hub,Ob) : 1.0
+        source_impulse_cap = _source_drag_impulse_cap(drag_dt_mode,
+            drag_max_impulse,gravity && gravity_gas_kick,
+            gravity_drag_max_impulse,gravity_slip_factor)
+        if drag_enabled && isfinite(source_impulse_cap) &&
+           drag_impulse > source_impulse_cap
             drag_impulse_limited_steps += 1
-            for _ in 1:2
-                drag_impulse <= drag_max_impulse * (1 + 1e-6) && break
-                dt *= drag_max_impulse / drag_impulse
+            for _ in 1:12
+                drag_impulse <= source_impulse_cap * (1 + 1e-6) && break
+                dt *= 0.99 * source_impulse_cap / drag_impulse
                 last_dt = dt
                 a_after_step = zrun ? _advance_a_rk2(Om, OL, Ok, Or, a, dt, a_end) : 1.0
                 zsource = zrun ? a_to_z(0.5 * (a_before + a_after_step)) : 0.0
@@ -5938,6 +5989,8 @@ function main()
                 drag_impulse = _drag_impulse(gamma_drag, dtphys_source, dt, drag_rate_code)
                 last_drag_f = exp(-drag_impulse)
             end
+            drag_impulse <= source_impulse_cap * (1 + 1e-6) || error(
+                "failed to resolve the gravity/drag source impulse")
             nsub = max(1, ceil(Int, dt / max(dt_explicit, eps(Float64))))
             last_nsub = nsub
         end
@@ -6156,6 +6209,13 @@ function main()
             _debug_div("after_chem_half_pre", cyc, zrun ? a_before : 1.0)
             _debug_phase_state("after_chem_half_pre", cyc, a_before, dt, smax)
         end
+        if drag_enabled && gravity && gravity_gas_kick
+            fast_impulse=drag_impulse*gravity_slip_factor
+            fast_impulse <= gravity_drag_max_impulse*(1+1e-6) || error(
+                "chemistry increased the gravity/drag slip impulse beyond its " *
+                "accuracy cap; reduce MHD_MAXEXP or MHD_SOURCE_MAX_DT_FACTOR")
+            max_gravity_fast_impulse=max(max_gravity_fast_impulse,fast_impulse)
+        end
         if use_terminal
             vcap_step = terminal_vcap
             if chem_advect_species
@@ -6252,6 +6312,9 @@ function main()
                         MHDKernels.apply_linear_drag!(s,hubble_half_decay;
                             energy_compensation=radiation_drag ?
                                 radiation_workspace.energy_residual : nothing)
+                        radiation_photon_state === nothing ||
+                            MHDKernels.rescale_photon_velocities!(
+                                radiation_photon_state,inv(hubble_half_decay))
                     end
                 end
                 if drag_enabled && !exponential_drag && !source_aware_drag && !radiation_drag
@@ -6338,6 +6401,9 @@ function main()
                         MHDKernels.apply_linear_drag!(s,hubble_half_decay;
                             energy_compensation=radiation_drag ?
                                 radiation_workspace.energy_residual : nothing)
+                        radiation_photon_state === nothing ||
+                            MHDKernels.rescale_photon_velocities!(
+                                radiation_photon_state,inv(hubble_half_decay))
                     end
                 end
                 if chem_advect_species
@@ -6761,6 +6827,7 @@ function main()
                                        density_kmode=pmf_kmode,
                                        mode_history_path=mode_history_path,
                                        mode_kmode=pmf_kmode, hubble=hub, omega_b=Ob,
+                           physical_box_ckpc_h=hub*terminal_lbox_cm/_PMF_KPC_CM,
                                        radiation_workspace=radiation_workspace,
                                        radiation_photon_state=radiation_photon_state,
                                        radiation_drag_rate=drag_impulse /
@@ -6854,6 +6921,7 @@ function main()
                            btrans0=Float64(st.btrans0), density_kmode=pmf_kmode,
                            mode_history_path=mode_history_path,
                            mode_kmode=pmf_kmode, hubble=hub, omega_b=Ob,
+                           physical_box_ckpc_h=hub*terminal_lbox_cm/_PMF_KPC_CM,
                            radiation_workspace=radiation_workspace,
                            radiation_photon_state=radiation_photon_state,
                            radiation_drag_rate=drag_impulse /
@@ -6958,6 +7026,7 @@ function main()
         radiation_energy_ledger.component_residual_abs /
         max(radiation_energy_ledger.component_magnitude_abs, eps(Float64))
     pmf_init === :magpressure && @printf("MODE: delta2k_amp %.8e\n", delta2k_final)
+    @printf("GRAVITY_SOURCE_ACCURACY max_fast_slip_impulse=%.6g observed_max=%.9e (applies when gas gravity and drag are active)\n", gravity_drag_max_impulse,max_gravity_fast_impulse)
     drag_enabled && @printf("DRAG: mode=%s regime=%s boost=%.3f boosted_steps=%d subcycles_total=%d last_nsub=%d max_impulse=%.6e impulse_limited_steps=%d last_explicit_dt=%.3e last_dt=%.3e last_f=%.8f last_Gamma_over_H=%.6e rate_code=%.6e xe_mode=%s last_xe=%.6e terminal_gamma_scale=%.3e terminal_vcap=%.3e terminal_vmax=%.3e terminal_pressure_coeff=%.6e terminal_pressure_coeff_mode=%s induction_subcycles=%d last_induction_nsub=%d terminal_idiff_coeff=%.3e hybrid_va_cs=%.3e hybrid_drag_over_omega=%.3e handoff_events=%d handoff_steps=%d handoff_remaining=%d handoff_alpha_max=%.3f handoff_ramp=cosine handoff_alpha_last=%.3f handoff_error_last=%.6e handoff_error_max=%.6e handoff_error_settled_max=%.6e handoff_dv_rms=%.6e handoff_vt_rms=%.6e handoff_vf_rms=%.6e handoff_error_tol=%.6e handoff_correction_dcell_last=%.6e handoff_correction_dcell_max=%.6e handoff_correction_dcell_sum=%.6e handoff_correction_dcell_tol=%.6e\n",
                             String(drag_dt_mode), last_hybrid_regime, drag_dt_boost, boosted_steps, subcycles_total, last_nsub,
                             drag_max_impulse, drag_impulse_limited_steps,

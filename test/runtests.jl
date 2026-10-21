@@ -23,3 +23,7 @@ end
 module CheckpointTests
 include("inherited/test_pmf_checkpoint_helpers.jl")
 end
+
+module RelativeVelocityTests
+include("test_relative_velocities.jl")
+end

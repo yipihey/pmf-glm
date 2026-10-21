@@ -1,0 +1,11 @@
+FULL_RUN tag=free_expansion z=600.0 vb=50041.631973355514 vc=50041.633294313215 vg=100000.0 free_only_vmatter=50041.63197335554 free_only_vphoton=100000
+FULL_RUN tag=physical_drag z=600.0 vb=71997.29121389239 vc=50041.633294313215 vg=72961.33926394375 free_only_vmatter=50041.63197335554 free_only_vphoton=100000
+FULL_RUN tag=physical_drag_refined z=600.0 vb=72043.70218835415 vc=50041.633294313215 vg=72905.44768899861 free_only_vmatter=50041.63197335554 free_only_vphoton=100000
+Test Summary:                 | Pass  Total   Time
+production velocity evolution |   10     10  36.7s
+FULL_RUN tag=gravity_refinement_1 z=1199.5 vb=1.104089306113855e-14 vc=-5.1494053005021686e-15 vg=0.0 free_only_vmatter=99958.36802664447 free_only_vphoton=100000
+FULL_RUN tag=gravity_refinement_2 z=1199.5 vb=-1.9530630582742686e-15 vc=1.5419123216192934e-15 vg=-9.557743976388869e-18 free_only_vmatter=99958.36802664447 free_only_vphoton=100000
+FULL_RUN tag=gravity_refinement_3 z=1199.5 vb=4.710639896650676e-16 vc=3.675375911281209e-15 vg=-1.6999844884539507e-17 free_only_vmatter=99958.36802664447 free_only_vphoton=100000
+FULL_RUN tag=gravity_refinement_4 z=1199.5 vb=-2.466469878471028e-15 vc=2.143161151433106e-15 vg=-2.200247864144961e-17 free_only_vmatter=99958.36802664447 free_only_vphoton=100000
+Test Summary:                                         | Pass  Total  Time
+nonzero Poisson gravity and drag temporal convergence |   16     16  3.9s

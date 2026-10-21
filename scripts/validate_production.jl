@@ -67,14 +67,27 @@ for (key,x) in a.arrays
     errors[key] = maximum(abs, wide.(x) .- wide.(y)) /
                   max(maximum(abs,wide.(x)),1.0)
 end
+# A plotting/diagnostic request must not alter the physical trajectory.
+sparse_config = RunConfig(deepcopy(base.settings))
+sparse_config.settings["run"]["resume"] = false
+sparse_config.settings["diagnostics"]["every"] = 0
+sparse_run = launch(sparse_config,joinpath(out,"sparse-diagnostics");expected="STOPPED_AT_LIMIT")
+sparse_state = checkpoint_arrays(joinpath(sparse_run.output_dir,"checkpoint.jls"))
+a.runtime.a == sparse_state.runtime.a || error("diagnostic cadence changed the clock")
+cadence_error = maximum(keys(a.arrays)) do key
+    x=a.arrays[key]; y=sparse_state.arrays[key]
+    wide=eltype(x) <: Complex ? ComplexF64 : Float64
+    maximum(abs,wide.(x).-wide.(y))/max(maximum(abs,wide.(x)),1.0)
+end
+cadence_error <= 5e-6 || error("diagnostic cadence changed evolution: $cadence_error")
 worst = maximum(values(errors))
 passed = worst <= 5e-6
 record = Dict("schema_version"=>1,"backend"=>name,"status"=>passed ? "PASS" : "FAIL",
     "created_utc"=>string(now(UTC)),"machine"=>gethostname(),
     "source_fingerprint_sha256"=>source_fingerprint(),"julia_version"=>string(VERSION),
     "julia_threads"=>Threads.nthreads(),"wall_seconds"=>time()-started,
-    "scope"=>"full-physics endpoint smoke plus four-cycle full-MHD/photon/H-He-chemistry/gravity restart parity",
-    "cosmology_status"=>full.status,"restart_fields"=>length(errors),
+    "scope"=>"full-physics endpoint smoke plus four-cycle full-MHD/photon/H-He-chemistry/gravity restart and diagnostic-cadence parity",
+    "cosmology_status"=>full.status,"diagnostic_cadence_max_scaled_error"=>cadence_error,"restart_fields"=>length(errors),
     "restart_max_scaled_error"=>worst,"restart_error_tolerance"=>5e-6,
     "run_directory"=>relpath(out,root),"restart_field_errors"=>errors)
 destination = joinpath(root,"docs","data","production-$name.toml")

@@ -2,7 +2,7 @@
 [run]
 n = 16
 backend = "cpu"
-max_cycles = 3
+max_cycles = 32
 cfl = 0.2
 reconstruction = "plm"
 print_every = 1

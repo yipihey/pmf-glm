@@ -1,0 +1,110 @@
+---
+title: "Baryon, dark-matter, and photon relative velocities"
+---
+
+## Velocities in the CMB frame
+
+Use one physical frame for baryons, dark matter and photon dipoles. In physical
+peculiar velocities, the homogeneous matter equations are
+
+$$
+\dot{\mathbf u}_b+H\mathbf u_b=\mathbf g+\mathbf f_b
+ -\Gamma_b(\mathbf u_b-\mathbf u_\gamma),\qquad
+\dot{\mathbf u}_c+H\mathbf u_c=\mathbf g.
+$$
+
+Consequently specifying only `u_b-u_c` does not determine the drag. A common
+matter boost with the photon bath held fixed changes the physical problem.
+The GPU source-aware path supports a zero fixed drag target; working in the
+CMB coordinate frame is the supported choice. The evolved photon dipole may
+still be nonzero in this frame.
+
+The cosmological facade selects `scaling="jedamzik"`. Physical gas and photon
+velocities are `V_ref*sqrt(a_ref/a)*v_code`, while particle velocities are
+`1e4*L_h/a*v_particle`, with `L_h=cosmology.box_ckpc_h`. Never subtract their
+unconverted stored arrays. Gas expansion multiplies its code velocity by
+`sqrt(a_old/a_new)`; photon expansion multiplies its code velocity by
+`sqrt(a_new/a_old)`, leaving the photon density monopole unchanged. The latter
+keeps a homogeneous, unscattered physical photon dipole constant.
+
+The corrected evolution is fingerprinted in checkpoints. A checkpoint from
+before this correction cannot resume a corrected trajectory: restart from
+consistent initial conditions. This prevents silently retaining an erroneous
+pre-checkpoint photon history.
+
+## Gravity source accuracy
+
+Gravity remains a separate gas kick. A stiffly stable local drag solver does
+not by itself make this splitting accurate. The default
+`physics.gravity_drag_max_impulse=0.01` bounds the **outer** step's fast slip
+impulse. It uses `Gamma_b*dt` with a fixed photon reservoir and
+`(1+R_code)*Gamma_b*dt` with evolved photons. It is not replaced by particle
+subcycling. The cap is finite and positive and is checkpointed.
+
+For repeated final kicks against a frozen constant force, the steady slip
+bias is `q/(1-exp(-q))-1`; at `q=0.01` this is about 0.501%. This is a useful
+source-error scale, not a bound on all nonlinear errors. Decrease the cap to
+demonstrate convergence of the target observable. The cap may reduce throughput
+in strongly coupled, gravitating runs; it does not implement a joint implicit
+gravity/MHD/photon integrator. Runs without gas gravity retain their source-aware
+large-impulse updates.
+
+## Comparing DM and gas velocity fields
+
+`dm_v_x` is now the Fourier mode of a CIC mass/momentum velocity estimator on
+the Eulerian gas mesh, evaluated at current particle positions. This replaces
+the former transform over original lattice labels. Each cell averages the
+velocities of deposited particles with the same weights as its deposited mass.
+The mode is converted with the physical cosmology box, independently of
+`MHD_BOXSIZE`. The mode wavenumber likewise uses the physical box.
+
+The diagnostic reuses two integrator scratch grids after the force modes have
+been reduced and before the next evolution step. The deposition and mode
+reduction complete before those buffers are reused for another component.
+No additional full-grid velocity/density allocations are retained per output.
+Photon maps likewise inverse-transform a copy in the reusable radiation
+workspace, since a multidimensional real inverse FFT may overwrite its input.
+Output requests must not modify the persistent photon modes. The production
+validator compares sparse and frequent diagnostics through coupled evolution.
+
+Empty cells are assigned zero in this estimator; the output also reports
+`dm_velocity_empty_fraction`. An appreciable empty fraction requires a different
+estimator or a resolved mesh before interpreting a volume-weighted gas/DM
+comparison. After shell crossing, the DM mean velocity also does not describe
+the full velocity distribution. `dm_displacement_x` remains a lattice-label
+displacement diagnostic and must not be treated as an Eulerian velocity.
+
+## Validation
+
+`test/test_relative_velocities.jl` checks expansion units, the fast-slip source
+cap, the phase of translated Eulerian particle velocities, physical box units,
+and rejection of checkpoints made before the photon correction. Shared backend
+checks also exercise repeated deposition, empty cells, and photon rescaling on
+the explicitly requested real device.
+
+`tools.reference.homogeneous_velocities` independently integrates physical
+baryon, photon, and CDM velocities with fixed ionization using SciPy Radau.
+`scripts/validate_relative_velocities.jl` compares the actual production driver
+against this oracle and checks timestep refinement. A separate displaced-DM
+lattice case starts all velocities at zero, generates a nonzero periodic
+Poisson force, and refines the gravity/drag cap at a common endpoint. It checks
+signed complex baryon–photon slip against a finer temporal reference on the same
+grid, with signal floors and tolerances declared before execution. This does
+not supply an independent nonlinear gravity oracle or spatial convergence.
+
+Run from the repository root with a new output directory:
+
+```sh
+julia --project=. -t 4 scripts/validate_relative_velocities.jl results/velocity-cpu-f32 f32
+julia --project=. -t 4 scripts/validate_relative_velocities.jl results/velocity-cpu-f64 f64
+```
+
+The validator clears unrelated `MHD_*` shell settings and records source/oracle
+hashes, resolved settings, raw complex-mode comparisons, actual endpoints and
+checkpoints. Chemistry is disabled and ionization is fixed to isolate velocity
+transport; these are controlled limits, not a converged recombination calculation.
+
+{{< src "lib/MHDKernels/src/radiation_coupling.jl" "function rescale_photon_velocities!" >}}
+{{< src "src/production/runner.jl" "function _source_drag_impulse_cap" >}}
+{{< src "lib/MHDKernels/src/gravity_coupling.jl" "function deposit_particle_velocity!" >}}
+{{< test "test/test_relative_velocities.jl" >}}

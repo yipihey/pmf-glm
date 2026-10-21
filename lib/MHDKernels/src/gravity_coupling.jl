@@ -6,6 +6,69 @@ export predict_density_backward!, predict_density_perturbation_backward!,
 export initialize_lattice_displacements!
 export deposit_lattice_displacements!, deposit_lattice_displacement_delta!
 export drift_lattice_displacements!
+export deposit_particle_velocity!
+
+@kernel function _deposit_particle_velocity_k!(density,momentum,
+        @Const(px),@Const(py),@Const(pz),@Const(v),N::Int,
+        lattice::Val{LATTICE}) where {LATTICE}
+    p=@index(Global)
+    @inbounds begin
+        T=eltype(density)
+        q=p-1
+        i=LATTICE ? q%N : 0
+        j=LATTICE ? (q÷N)%N : 0
+        k=LATTICE ? q÷(N*N) : 0
+        shift=LATTICE ? zero(T) : -T(0.5)
+        x=T(N)*T(px[p])+shift
+        y=T(N)*T(py[p])+shift
+        z=T(N)*T(pz[p])+shift
+        ix=unsafe_trunc(Int,floor(x)); iy=unsafe_trunc(Int,floor(y))
+        iz=unsafe_trunc(Int,floor(z))
+        fx=x-T(ix); fy=y-T(iy); fz=z-T(iz)
+        for dz in 0:1,dy in 0:1,dx in 0:1
+            w=(dx==0 ? one(T)-fx : fx)*
+              (dy==0 ? one(T)-fy : fy)*(dz==0 ? one(T)-fz : fz)
+            c=mod(i+ix+dx,N)+N*mod(j+iy+dy,N)+N*N*mod(k+iz+dz,N)+1
+            KA.@atomic density[c] += w
+            KA.@atomic momentum[c] += w*T(v[p])
+        end
+    end
+end
+
+@kernel function _normalize_particle_velocity_k!(velocity,@Const(density))
+    c=@index(Global)
+    @inbounds velocity[c]=density[c]>0 ? velocity[c]/density[c] : zero(eltype(velocity))
+end
+
+"""
+    deposit_particle_velocity!(velocity, density, px, py, pz, v; N,
+                               lattice_displacements=false)
+
+CIC-deposit particle mass and one momentum component at current positions,
+then form the mass-weighted velocity within each Eulerian cell. Empty cells
+have velocity zero and remain identifiable by `density==0`. Displacements
+are relative to the implicit cell-centred lattice when requested. This is a
+mesh velocity estimator, not a particle-label Fourier transform or an
+unambiguous single-stream velocity after shell crossing.
+"""
+function deposit_particle_velocity!(velocity,density,px,py,pz,v;
+                                     N::Integer,lattice_displacements::Bool=false)
+    N>=2 || throw(ArgumentError("particle velocity grid requires N>=2"))
+    length(velocity)==length(density)==N^3 || throw(DimensionMismatch("velocity grid size"))
+    all(length(a)==length(v) for a in (px,py,pz)) ||
+        throw(DimensionMismatch("particle array sizes"))
+    lattice_displacements && length(v)!=N^3 &&
+        throw(DimensionMismatch("implicit lattice needs N^3 particles"))
+    velocity===density && throw(ArgumentError("velocity and density must not alias"))
+    fill!(density,zero(eltype(density))); fill!(velocity,zero(eltype(velocity)))
+    be=KA.get_backend(density)
+    _deposit_particle_velocity_k!(be)(density,velocity,px,py,pz,v,Int(N),
+        Val(lattice_displacements);ndrange=length(v))
+    KA.synchronize(be)
+    _normalize_particle_velocity_k!(be)(velocity,density;ndrange=length(density))
+    KA.synchronize(be)
+    velocity
+end
 
 @kernel function _initialize_lattice_displacements_k!(dxp, dyp, dzp, vx, vy, vz)
     p = @index(Global)

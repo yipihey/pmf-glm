@@ -327,12 +327,15 @@ function _test_chemistry(name)
     end
 end
 
+include("relative_velocity_checks.jl")
+
 function _run_backend_tests(name)
     name === :cuda && CUDA.allowscalar(false)
     @testset "PMFGLM $name Float32 backend" begin
         @testset "Smooth MHD and mass conservation" _test_smooth_mhd(name)
         @testset "Native FFT roundtrip and cache isolation" _test_fft(name)
         @testset "Periodic Poisson" _test_poisson(name)
+        @testset "Eulerian particle velocities and photon expansion" relative_velocity_checks(name,Float32)
         @testset "Coupled photon moments" _test_photons(name)
         @testset "Production chemistry and cooling" _test_chemistry(name)
     end
