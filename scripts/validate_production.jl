@@ -35,6 +35,19 @@ function launch(config,path;expected="COMPLETED")
     result
 end
 
+function streaming_initial_check(path)
+    lines = readlines(joinpath(path,"streaming.tsv"))
+    header = Base.split(lines[1],'\t'); row = Base.split(lines[2],'\t')
+    values = Dict(header .=> row)
+    initial = parse.(Float64,[values["vbc_x_cms"],values["vbc_y_cms"],values["vbc_z_cms"]])
+    maximum(abs,initial./[1e5,0.5e5,0.25e5].-1) <= 2e-6 ||
+        error("streaming IC units or sign mismatch")
+    modes = readlines(joinpath(path,"modes.tsv"))
+    columns = Base.split(modes[1],'\t'); mode = Base.split(modes[2],'\t')
+    k = parse(Float64,mode[findfirst(==("k_comoving_mpc_inv"),columns)])
+    isapprox(k,2pi*1000*0.674/2;rtol=1e-12) || error("physical mode box mismatch")
+end
+
 started = time()
 smoke = load_config(joinpath(root,"examples","cosmology-smoke.toml"))
 smoke.settings["run"]["backend"] = name
@@ -42,7 +55,10 @@ full = launch(smoke,joinpath(out,"cosmology"))
 
 # Deliberately stop at a cycle budget so the three trajectories have identical
 # timesteps and final scale factor. Include chemistry and persistent photons.
-base = RunConfig(deepcopy(smoke.settings))
+base = load_config(joinpath(root,"examples","streaming-planar-smoke.toml"))
+base.settings["run"]["backend"] = name
+# This also exercises physical box != diagnostic coordinate box, coherent
+# streaming, planar symmetry, and their checkpoint preservation.
 base.settings["cosmology"]["zend"] = 3190.0
 base.settings["cosmology"]["max_dln_a"] = 1e-4
 base.settings["run"]["max_cycles"] = 4
@@ -55,6 +71,12 @@ base.settings["run"]["resume"] = true
 resumed = launch(base,joinpath(out,"resumed");expected="STOPPED_AT_LIMIT")
 a = checkpoint_arrays(joinpath(continuous.output_dir,"checkpoint.jls"))
 b = checkpoint_arrays(joinpath(resumed.output_dir,"checkpoint.jls"))
+streaming_initial_check(continuous.output_dir)
+planar_error = maximum(1:9) do i
+    field = reshape(a.arrays["mhd_U_$i"],16,16,16)
+    maximum(abs,field.-circshift(field,(0,0,1)))/max(1,maximum(abs,field))
+end
+planar_error <= 5e-6 || error("planar symmetry lost in coupled evolution: $planar_error")
 keys(a.arrays) == keys(b.arrays) || error("checkpoint field sets differ")
 a.runtime.cycle == b.runtime.cycle == 4 || error("restart did not reach cycle four")
 a.runtime.a == b.runtime.a || error("restart changed the cosmological clock")
@@ -86,8 +108,9 @@ record = Dict("schema_version"=>1,"backend"=>name,"status"=>passed ? "PASS" : "F
     "created_utc"=>string(now(UTC)),"machine"=>gethostname(),
     "source_fingerprint_sha256"=>source_fingerprint(),"julia_version"=>string(VERSION),
     "julia_threads"=>Threads.nthreads(),"wall_seconds"=>time()-started,
-    "scope"=>"full-physics endpoint smoke plus four-cycle full-MHD/photon/H-He-chemistry/gravity restart and diagnostic-cadence parity",
-    "cosmology_status"=>full.status,"diagnostic_cadence_max_scaled_error"=>cadence_error,"restart_fields"=>length(errors),
+    "scope"=>"full-physics endpoint smoke plus four-cycle planar streaming full-MHD/photon/H-He-chemistry/gravity restart and diagnostic-cadence parity",
+    "cosmology_status"=>full.status,"planar_max_scaled_error"=>planar_error,
+    "streaming_initial_relative_tolerance"=>2e-6,"diagnostic_cadence_max_scaled_error"=>cadence_error,"restart_fields"=>length(errors),
     "restart_max_scaled_error"=>worst,"restart_error_tolerance"=>5e-6,
     "run_directory"=>relpath(out,root),"restart_field_errors"=>errors)
 destination = joinpath(root,"docs","data","production-$name.toml")

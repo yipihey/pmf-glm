@@ -1,0 +1,45 @@
+# Small full-physics capability check; no primordial cosmological transfer ICs.
+# Planar fields are replicated through the existing cube (O(N^3) memory).
+[run]
+n = 16
+backend = "cpu"
+max_cycles = 12
+cfl = 0.2
+reconstruction = "plm"
+print_every = 1
+check_every = 1
+checkpoint_final = true
+
+[cosmology]
+zstart = 3200.0
+zend = 3199.9
+box_ckpc_h = 2.0
+
+[magnetic]
+b0_ng = 0.003
+kcut = 12.566370614359172
+kmax = 12.566370614359172
+minimum_cells_per_wavelength = 8
+seed = 42
+invariant_axis = 3
+
+# Peculiar km/s at zstart, sign vb-vc; DM initially at rest.
+# Deliberately small and arbitrary: NOT a recombination streaming RMS prediction.
+[streaming]
+vx_kms = 1.0
+vy_kms = 0.5
+vz_kms = 0.25
+
+[chemistry]
+mode = "mixing"
+smoothing = "gaussian"
+smoothing_sigma_cells = 2.0
+
+[diagnostics]
+every = 1
+angle_bins = 1
+spectrum_bins = 8
+energy_ledger_every = 1
+streaming = true
+frame_redshifts = [3200.0, 3199.95, 3199.9]
+frame_field = "both"

@@ -220,3 +220,38 @@ To compare an evolved candidate, preserve the same complex Fourier convention,
 units, polarization, epochs, and field names. Read `tools/README.md` for handoff
 generators and strict comparison commands. The native nonlinear hierarchy
 campaign and private/external paper data are not bundled certification.
+
+## Streaming and planar regression scope {#sec-streaming-validation}
+
+The streaming extensions are controlled capabilities, not a completed
+Tseliakhovich–Hirata cosmological reproduction. The independent matter-era ODE
+checks exact pressureless growth, transverse-stream invariance, conjugate phases
+under velocity reversal, and suppression in a declared short-mode example.
+The shared CPU/device tests check a common physical boost, periodic sampling at
+moved particles, all three components, and planar MHD invariance.
+{{< test "test/streaming_checks.jl" >}}
+{{< test "test/python/test_streaming.py" >}}
+
+The production validator retains its full-physics endpoint smoke and adds a
+four-cycle planar streaming restart control and sparse/frequent diagnostic
+comparison. It checks the actual physical-box wavenumber, initial velocity sign
+and units, and coupled planar invariance with a `5e-6` scaled tolerance. These
+cycle-limited trajectories are deliberately `STOPPED_AT_LIMIT`; their restart
+comparison is not an endpoint or long-time physical convergence result.
+{{< src "scripts/validate_production.jl" "streaming_initial_check" >}}
+
+During this audit, the coupled planar gate exposed a pre-existing diagnostic
+side effect: inverse-transforming the live photon Fourier state modified its
+input on FFTW. Diagnostics now copy photon modes to reusable FFT scratch before
+inversion. Tests assert that photon modes are unchanged by reading maps and
+that subsequent coherent-flow evolution agrees with a run that did not read them.
+The production cadence comparison checks this through the coupled driver.
+{{< src "lib/MHDKernels/src/radiation_coupling.jl" "photon_fields_to_workspace!" >}}
+
+Planar initial conditions still use the full cube, and a constant imposed stream
+does not generate correlated primordial gas/DM transfer initial conditions.
+Eulerian relative-velocity spectra with an explicit multistream/empty-cell
+estimator, a cosmological transfer generator, long-interval matched streaming
+validation, and a reduced-memory planar coupled backend remain outside this
+validation scope. Use [the streaming conventions](physics.qmd#sec-streaming)
+and [the output workflow](outputs.qmd#sec-streaming-output) when designing a study.

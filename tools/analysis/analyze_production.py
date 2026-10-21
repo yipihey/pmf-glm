@@ -107,7 +107,7 @@ def pdf_integrals(rows: list[dict]) -> list[dict]:
 
 def save_figure(figure, stem: Path) -> None:
     for extension in ("png", "pdf"):
-        figure.savefig(stem.with_suffix("." + extension), dpi=160, bbox_inches="tight")
+        figure.savefig(Path(str(stem) + "." + extension), dpi=160, bbox_inches="tight")
     plt.close(figure)
 
 
@@ -146,6 +146,24 @@ def plot_history(rows: list[dict], output: Path) -> None:
         if axis.lines:
             axis.legend(fontsize=7)
     save_figure(figure, output / "history")
+
+
+def plot_streaming(rows: list[dict], output: Path) -> None:
+    rows = sorted(rows, key=lambda r: int(r["cycle"]))
+    columns = ("z", "vbc_x_cms", "vbc_y_cms", "vbc_z_cms", "vbc_rms_cms", "vbc_dispersion_cms")
+    values = np.array([[float(r[c]) for c in columns] for r in rows])
+    if not np.isfinite(values).all():
+        raise ValueError("streaming diagnostics require finite epochs and velocities")
+    figure, axes = plt.subplots(1, 2, figsize=(9, 4), layout="constrained")
+    for axis, indices in zip(axes, ((1, 2, 3), (4, 5))):
+        for i in indices:
+            axis.plot(values[:, 0], values[:, i]/1e5, marker=".", label=columns[i].replace("_cms", ""))
+        axis.set(xlabel="Redshift z", ylabel="Peculiar velocity [km/s]")
+        axis.invert_xaxis()
+        axis.grid(alpha=0.2)
+        axis.legend(fontsize=8)
+    figure.suptitle("Baryon minus DM velocity at DM positions (DM mass weighted)")
+    save_figure(figure, output / "streaming")
 
 
 def sample_epochs(rows: list[dict], maximum: int = 3) -> list[tuple[int, float]]:
@@ -203,7 +221,7 @@ def plot_pdfs(rows: list[dict], output: Path) -> None:
 
 def discover_run(run: Path) -> tuple[dict, dict]:
     files = {name: run / filename for name, filename in
-             (("history", "history.tsv"), ("spectra", "spectra.tsv"), ("pdf", "pdfs.tsv"))
+             (("history", "history.tsv"), ("spectra", "spectra.tsv"), ("pdf", "pdfs.tsv"), ("streaming", "streaming.tsv"))
              if (run / filename).is_file()}
     if not files:
         raise ValueError(f"no history.tsv, spectra.tsv, or pdfs.tsv in {run}")
@@ -216,13 +234,14 @@ def discover_run(run: Path) -> tuple[dict, dict]:
 
 
 def analyze(output: Path, *, history: Path | None = None, spectra: Path | None = None,
-            pdf: Path | None = None, length_unit: str | None = None, hubble: float | None = None,
+            pdf: Path | None = None, streaming: Path | None = None, length_unit: str | None = None, hubble: float | None = None,
             box_ckpc_h: float | None = None, spectral_boxsize: float | None = None,
             run: Path | None = None) -> dict:
     run_metadata = {}
     if run is not None:
         files, run_metadata = discover_run(run)
         history, spectra, pdf = history or files.get("history"), spectra or files.get("spectra"), pdf or files.get("pdf")
+        streaming = streaming or files.get("streaming")
         if output.resolve() == run.resolve():
             raise ValueError("analysis output must not be the input run directory")
     environment = run_metadata.get("environment", {})
@@ -244,7 +263,7 @@ def analyze(output: Path, *, history: Path | None = None, spectra: Path | None =
         if box_ckpc_h is not None:
             length_unit = "box"
             unit_origin = "run metadata physical box and MHD_BOXSIZE (default 1)"
-    if not any((history, spectra, pdf)):
+    if not any((history, spectra, pdf, streaming)):
         raise ValueError("supply at least one history, spectra, or PDF TSV")
     if spectra and length_unit is None:
         raise ValueError("spectra require an explicit --length-unit; units are not in the TSV")
@@ -261,7 +280,7 @@ def analyze(output: Path, *, history: Path | None = None, spectra: Path | None =
         if (run / "metadata.toml").is_file():
             summary["inputs"]["metadata"] = dict(path=str((run / "metadata.toml").resolve()),
                 sha256=hashlib.sha256((run / "metadata.toml").read_bytes()).hexdigest())
-    for label, path in (("history", history), ("spectra", spectra), ("pdf", pdf)):
+    for label, path in (("history", history), ("spectra", spectra), ("pdf", pdf), ("streaming", streaming)):
         if path:
             summary["inputs"][label] = dict(path=str(path.resolve()), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
     if history:
@@ -274,6 +293,11 @@ def analyze(output: Path, *, history: Path | None = None, spectra: Path | None =
             finite = values[np.isfinite(values)]
             summary["history_finite_ranges"][field] = ([float(finite.min()), float(finite.max())]
                                                        if finite.size else None)
+    if streaming:
+        rows = read_tsv(streaming, ("cycle", "z", "vbc_x_cms", "vbc_y_cms", "vbc_z_cms", "vbc_rms_cms", "vbc_dispersion_cms"))
+        plot_streaming(rows, output)
+        summary["streaming_rows"] = len(rows)
+        summary["notes"].append("Streaming is v_b-v_c sampled at actual DM positions, weighted by equal particle mass; not a volume-weighted velocity spectrum.")
     if spectra:
         rows = read_tsv(spectra, ("field", "cycle", "measured", "z", "kbin", "mubin", "k", "P", "Nmodes"))
         scale = length_in_mpc(length_unit, hubble, box_ckpc_h, spectral_boxsize)
@@ -310,6 +334,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, help="plot directory (default RUN_DIR/analysis in run-directory mode)")
     parser.add_argument("--run", type=Path, help="explicit input run directory; positional path becomes output")
     parser.add_argument("--history", type=Path)
+    parser.add_argument("--streaming", type=Path)
     parser.add_argument("--spectra", type=Path)
     parser.add_argument("--pdf", "--pdfs", dest="pdf", type=Path)
     parser.add_argument("--length-unit", choices=("box", "cMpc", "ckpc", "ckpc/h"),
@@ -321,7 +346,7 @@ def main() -> int:
     args = parser.parse_args()
     options = vars(args)
     path, output = options.pop("path"), options.pop("output")
-    if options["run"] is None and not any(options[name] for name in ("history", "spectra", "pdf")):
+    if options["run"] is None and not any(options[name] for name in ("history", "spectra", "pdf", "streaming")):
         options["run"] = path
         output = output or path / "analysis"
     else:

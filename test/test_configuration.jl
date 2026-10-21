@@ -58,3 +58,16 @@ for relative in ("Project.toml","environments/metal/Project.toml","environments/
         @test haskey(data["deps"],name)
     end
 end
+
+streaming_config = load_config(joinpath(@__DIR__,"..","examples","streaming-planar-smoke.toml"))
+streaming_env = run_environment(streaming_config;output_dir="/tmp/pmf-streaming-config")
+@test streaming_env["MHD_STREAMING_VX_KMS"] == "1.0"
+@test streaming_env["MHD_PMF_INVARIANT_AXIS"] == "3"
+@test streaming_env["MHD_STREAMING_TSV"] == "/tmp/pmf-streaming-config/streaming.tsv"
+@test streaming_env["MHD_DENSITY_FRAME_DIR"] == "/tmp/pmf-streaming-config/frames"
+@test_throws ArgumentError RunConfig(Dict("streaming"=>Dict("vx_kms"=>NaN)))
+@test_throws ArgumentError RunConfig(Dict("magnetic"=>Dict("invariant_axis"=>4)))
+@test_throws ArgumentError RunConfig(Dict("diagnostics"=>Dict("streaming"=>"true")))
+for key in ("MHD_STREAMING_VX_KMS","MHD_PMF_INVARIANT_AXIS")
+    @test_throws ErrorException PMFGLM._validate_restart_environment(env,merge(env,Dict(key=>"1")))
+end

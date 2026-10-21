@@ -309,8 +309,10 @@ function pmf_batchelor_field(dims::NTuple{3,Int}; box::Real = 1,
                              fixed_mode_power::Bool = false,
                              mode_realization = :legacy,
                              realization_box = nothing,
-                             minimum_cells_per_wavelength = nothing)
+                             minimum_cells_per_wavelength = nothing,
+                             invariant_axis::Integer = 0)
     nx, ny, nz = dims
+    invariant_axis in 0:3 || error("invariant_axis must be 0, 1, 2, or 3")
     iseven(nx) || error("pmf_batchelor_field currently requires even nx for rfft packing")
     L = Float64(box)
     target = Float64(brms)
@@ -436,7 +438,8 @@ function pmf_batchelor_field(dims::NTuple{3,Int}; box::Real = 1,
             ky = kyv[jj]
             kz = kzv[kk]
             k2 = kx*kx + ky*ky + kz*kz
-            if k2 == 0 || k2 > km * km
+            if k2 == 0 || k2 > km * km ||
+               (invariant_axis != 0 && (kx,ky,kz)[invariant_axis] != 0)
                 bxk[ii,jj,kk] = 0
                 byk[ii,jj,kk] = 0
                 bzk[ii,jj,kk] = 0
@@ -575,6 +578,7 @@ function pmf_batchelor_field(dims::NTuple{3,Int}; box::Real = 1,
              curl_reference_n = curl_ref_n,
              curl_symbol = String(curl_mode),
              fixed_mode_power = fixed_mode_power,
+             invariant_axis = Int(invariant_axis),
              mode_realization = String(realization_mode),
              realization_box = realization_L,
              preserve_low_kmax = preserve_low ? low_km : NaN,
@@ -608,7 +612,8 @@ function init_pmf_batchelor!(s::MHDState{T}; brms = nothing, b0_pG = nothing,
                              fixed_mode_power::Bool = false,
                              mode_realization = :legacy,
                              realization_box = nothing,
-                             minimum_cells_per_wavelength = nothing) where {T}
+                             minimum_cells_per_wavelength = nothing,
+                             invariant_axis::Integer = 0) where {T}
     br = brms === nothing ? begin
         b0_pG === nothing && error("provide either brms code units or b0_pG")
         Float64(b0_pG) / Float64(Bunit_pG)
@@ -627,7 +632,8 @@ function init_pmf_batchelor!(s::MHDState{T}; brms = nothing, b0_pG = nothing,
                                             fixed_mode_power=fixed_mode_power,
                                             mode_realization=mode_realization,
                                             realization_box=realization_box,
-                                            minimum_cells_per_wavelength=minimum_cells_per_wavelength)
+                                            minimum_cells_per_wavelength=minimum_cells_per_wavelength,
+                                            invariant_axis=invariant_axis)
     _install_pmf_field!(s, Bx, By, Bz; rho0=rho0, p0=p0)
     return merge(stats, (rho0=Float64(rho0), p0=Float64(p0), Bunit_pG=Float64(Bunit_pG)))
 end
@@ -657,7 +663,8 @@ function init_pmf_batchelor_tiled!(s::MHDState{T}; tile_box::Real,
                                   fixed_mode_power::Bool = false,
                                   mode_realization = :legacy,
                                   realization_box = nothing,
-                                  minimum_cells_per_wavelength = nothing) where {T}
+                                  minimum_cells_per_wavelength = nothing,
+                             invariant_axis::Integer = 0) where {T}
     br = brms === nothing ? begin
         b0_pG === nothing && error("provide either brms code units or b0_pG")
         Float64(b0_pG) / Float64(Bunit_pG)
@@ -687,7 +694,8 @@ function init_pmf_batchelor_tiled!(s::MHDState{T}; tile_box::Real,
                                                 fixed_mode_power=fixed_mode_power,
                                                 mode_realization=mode_realization,
                                                 realization_box=realization_box,
-                                                minimum_cells_per_wavelength=minimum_cells_per_wavelength)
+                                                minimum_cells_per_wavelength=minimum_cells_per_wavelength,
+                                            invariant_axis=invariant_axis)
     Bx = nt == n ? Bxt : _periodic_tile_field(Bxt, s.dims)
     By = nt == n ? Byt : _periodic_tile_field(Byt, s.dims)
     Bz = nt == n ? Bzt : _periodic_tile_field(Bzt, s.dims)

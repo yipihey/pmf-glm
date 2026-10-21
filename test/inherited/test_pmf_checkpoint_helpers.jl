@@ -339,3 +339,16 @@ end
     @test stats[2] ≈ stats[1] rtol=2e-6
     @test stats[3] ≈ stats[1] rtol=2e-6
 end
+
+@testset "baryon-DM common physical clocks" begin
+    a0 = z_to_a(1100.0); a1 = z_to_a(500.0)
+    h=0.674; Lh=2.75; vunit=8e5; lbox=Lh/h*_PMF_KPC_CM
+    unit0 = _cosmological_velocity_unit(vunit,a0,a0)
+    unit1 = _cosmological_velocity_unit(vunit,a1,a0)
+    @test _hubble_momentum_decay(a0,a1,a0)*unit1/unit0 ≈ a0/a1
+    @test _particle_velocity_cms_per_code(a1,Lh)/_particle_velocity_cms_per_code(a0,Lh) ≈ a0/a1
+    dtau=0.03
+    @test _gas_gravity_kick_dt(dtau,a1,h,vunit,lbox,a0)*unit1 ≈
+          dtau*_particle_velocity_cms_per_code(a1,Lh)
+    @test _particle_dt_limit(1e8,1e-20,0.01) ≈ 1e-10
+end

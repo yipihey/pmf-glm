@@ -77,7 +77,7 @@ end
     h = 0.674
     vunit = 8.0e5
     lbox = 6.0 * _PMF_KPC_CM
-    H0 = 100h * 1.0e5 / 3.0857e24
+    H0 = 100h * 1.0e5 / _PMF_MPC_CM
     expected = dtau * H0 * lbox / (a * vunit)
     kick_dt = _gas_gravity_kick_dt(dtau, a, h, vunit, lbox)
     @test kick_dt ≈ expected rtol=2e-15

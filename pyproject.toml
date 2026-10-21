@@ -7,7 +7,7 @@ name = "pmf-reference"
 version = "0.1.0"
 description = "Independent CPU PMF reference models and production TSV diagnostics"
 requires-python = ">=3.11"
-dependencies = ["numpy>=2.0", "scipy>=1.13", "matplotlib>=3.8"]
+dependencies = ["numpy>=2.0", "scipy>=1.13", "matplotlib>=3.8", "Pillow>=9.1"]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]

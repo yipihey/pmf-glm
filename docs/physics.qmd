@@ -153,3 +153,54 @@ Gaussian smoothing approximates mixing. Optional nonlocal response tables add
 a separately modeled, support-limited response. Neither path solves full
 three-dimensional Lyman-alpha transfer; [validation limits](validation.qmd#sec-limitations)
 are part of the model specification.
+
+## Baryon–DM streaming and planar studies {#sec-streaming}
+
+A particle velocity is not an MHD velocity. The periodic particle solver stores
+$u_c=dx/d\tau$ with $d\tau=H_0dt/a^2$, so its physical peculiar velocity is
+$v_c=(H_0 L/a)u_c$, where $L$ is the **physical comoving box length**, independent
+of the spectral coordinate box. In Jedamzik scaling the gas conversion is
+$v_b=v_{\rm unit}\sqrt{a_{\rm ref}/a}\,u_b$. The gas momentum decay
+$u_b\propto a^{-1/2}$ and constant force-free particle $u_c$ both give physical
+$v\propto a^{-1}$. Their gravitational impulses agree after these conversions.
+{{< src "src/production/runner.jl" "_particle_velocity_cms_per_code" >}}
+{{< test "test/inherited/test_pmf_checkpoint_helpers.jl" "baryon-DM common physical clocks" >}}
+
+The optional `[streaming]` components `vx_kms`, `vy_kms`, and `vz_kms` specify
+physical peculiar **baryon minus DM** velocity at `cosmology.zstart`. The built-in
+initial state uses the DM rest frame: gas receives this uniform boost, preserving
+its internal energy, and DM begins at rest. No normalization epoch is inferred.
+Photons follow the existing comoving-gas initialization unless
+`MHD_RADIATION_PHOTON_COMOVING=false` is explicitly selected. That choice changes
+the photon rest frame and must be included in an experiment's specification.
+Streaming requires cosmology, full gravity with gas kicks, and Jedamzik scaling;
+a boost is rejected with an imported correlated state to avoid adding it twice.
+{{< src "lib/MHDKernels/src/streaming.jl" "boost_gas_velocity!" >}}
+
+[Tseliakhovich & Hirata (2010)](https://arxiv.org/abs/1005.2416) describe the
+coupling of coherent relative flows to short density modes. The supplied boost
+is a local controlled background, not a draw from their cosmological distribution.
+The built-in PMF gas/DM initialization is uniform in density and has no primordial
+adiabatic transfer realization. Its growing DM perturbations are PMF-driven.
+A cosmological suppression measurement needs correlated density, velocity, thermal
+and photon initial conditions and matched zero-stream controls. It also needs
+phase-sensitive density growth at common epochs and separate timestep/grid
+convergence. A plot of streaming RMS cannot establish that measurement.
+
+`tools/reference/streaming.py` supplies an independent **REFERENCE_ONLY**
+moving-background ODE in the DM frame, with matter-only expansion and prescribed
+adiabatic sound speed. Its analytic growing-mode, transverse-stream and conjugate
+phase tests check conventions; they do not certify the nonlinear coupled solver.
+{{< test "test/python/test_streaming.py" >}}
+
+`magnetic.invariant_axis=1|2|3` retains only magnetic modes with zero wavenumber
+along that axis before normalization. All three magnetic and velocity components
+remain active. This defines planar (2.5D) initial conditions evolved by the existing
+3D periodic cube kernels. It still allocates and updates **N cubed** cells; it is
+not an N-by-N-by-1 accelerated solver. The planar spectrum is a different ensemble
+from isotropic 3D Batchelor statistics, so do not interpret its 3D shell estimates
+as an isotropic cosmological spectrum. Uniform streaming, uniform chemistry, and
+the periodic lattice respect this symmetry analytically; tests check numerical
+invariance. Imported states require their own symmetry checks.
+{{< src "lib/MHDKernels/src/pmf.jl" "pmf_batchelor_field" >}}
+{{< test "test/streaming_checks.jl" >}}

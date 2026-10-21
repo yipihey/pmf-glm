@@ -15,7 +15,9 @@ const CONFIG_KEYS = Dict(
         "omega_m"=>"MHD_OM", "omega_b"=>"MHD_OB", "omega_lambda"=>"MHD_OL",
         "omega_r"=>"MHD_OR", "box_ckpc_h"=>"MHD_TERMINAL_LBOX_CKPC",
         "max_dln_a"=>"MHD_MAXEXP"),
-    "magnetic" => Dict("initial_condition"=>"MHD_PMF_INIT", "b0_ng"=>"MHD_PMF_B0_NG",
+    "streaming" => Dict("vx_kms"=>"MHD_STREAMING_VX_KMS", "vy_kms"=>"MHD_STREAMING_VY_KMS",
+        "vz_kms"=>"MHD_STREAMING_VZ_KMS"),
+    "magnetic" => Dict("invariant_axis"=>"MHD_PMF_INVARIANT_AXIS", "initial_condition"=>"MHD_PMF_INIT", "b0_ng"=>"MHD_PMF_B0_NG",
         "brms_code"=>"MHD_PMF_BRMS", "seed"=>"MHD_PMF_SEED", "kcut"=>"MHD_PMF_KCUT",
         "kmax"=>"MHD_PMF_KMAX", "kmin"=>"MHD_PMF_KMIN", "mode_lock_n"=>"MHD_PMF_MODE_LOCK_N",
         "curl_symbol"=>"MHD_PMF_CURL_SYMBOL", "curl_reference_n"=>"MHD_PMF_CURL_REFERENCE_N",
@@ -43,7 +45,8 @@ const CONFIG_KEYS = Dict(
     "diagnostics" => Dict("redshifts"=>"MHD_PK_ZS", "every"=>"MHD_PK_EVERY",
         "adaptive_fraction"=>"MHD_ADAPTIVE_DIAG_REL", "spectrum_bins"=>"MHD_PK_NBINS",
         "angle_bins"=>"MHD_PK_NMU", "pdf_bins"=>"MHD_PDF_NBINS",
-        "energy_ledger_every"=>"MHD_RADIATION_ENERGY_LEDGER_EVERY"),
+        "energy_ledger_every"=>"MHD_RADIATION_ENERGY_LEDGER_EVERY",
+        "streaming"=>"MHD_STREAMING_TSV", "frame_redshifts"=>"MHD_DENSITY_FRAME_ZS", "frame_field"=>"MHD_DENSITY_FRAME_FIELD"),
 )
 
 RunConfig(settings::AbstractDict) = validate_config(RunConfig(Dict{String,Any}(settings), ""))
@@ -91,6 +94,21 @@ function validate_config(c::RunConfig)
         B = _setting(c, "magnetic", "b0_ng", nothing)
         B isa Real && isfinite(B) && B > 0 || throw(ArgumentError("set a positive comoving b0_ng"))
     end
+    for key in ("vx_kms","vy_kms","vz_kms")
+        value = _setting(c,"streaming",key,0)
+        value isa Real && !(value isa Bool) && isfinite(value) ||
+            throw(ArgumentError("streaming.$key must be finite km/s"))
+    end
+    invariant = _setting(c,"magnetic","invariant_axis",0)
+    invariant isa Integer && !(invariant isa Bool) && invariant in 0:3 ||
+        throw(ArgumentError("magnetic.invariant_axis must be 0, 1, 2, or 3"))
+    _setting(c,"diagnostics","streaming",false) isa Bool ||
+        throw(ArgumentError("diagnostics.streaming must be boolean"))
+    _setting(c,"diagnostics","frame_field","gas") in ("gas","dm","both") ||
+        throw(ArgumentError("diagnostics.frame_field must be gas, dm, or both"))
+    frames = _setting(c,"diagnostics","frame_redshifts",Float64[])
+    frames isa AbstractVector && all(z->z isa Real && isfinite(z) && z>=0,frames) ||
+        throw(ArgumentError("diagnostics.frame_redshifts must be finite nonnegative redshifts"))
     return c
 end
 
@@ -119,6 +137,7 @@ function run_environment(c::RunConfig; output_dir::AbstractString)
     for (section, mapping) in CONFIG_KEYS
         for (key, name) in mapping
             value = _setting(c, section, key, nothing)
+            section == "diagnostics" && key == "streaming" && continue
             value === nothing || (env[name] = _envstr(value))
         end
     end
@@ -134,6 +153,13 @@ function run_environment(c::RunConfig; output_dir::AbstractString)
         "MHD_MODE_HISTORY_TSV"=>joinpath(out,"modes.tsv"),
         "MHD_CHECKPOINT_PATH"=>joinpath(out,"checkpoint.jls"),
         "MHD_INITIAL_PK"=>"1", "MHD_FINAL_DIAG"=>"1"))
+    if _setting(c,"diagnostics","streaming",false) || any(
+        _setting(c,"streaming",key,0) != 0 for key in ("vx_kms","vy_kms","vz_kms"))
+        env["MHD_STREAMING_TSV"] = joinpath(out,"streaming.tsv")
+    end
+    if _setting(c,"diagnostics","frame_redshifts",nothing) !== nothing
+        env["MHD_DENSITY_FRAME_DIR"] = joinpath(out,"frames")
+    end
     for (key,value) in get(c.settings,"environment",Dict())
         env[key] = _envstr(value)
     end

@@ -12,6 +12,13 @@ end
     include("test_gravity.jl")
 end
 
+include("streaming_checks.jl")
+@testset "streaming and planar three-component evolution" begin
+    for T in (Float32,Float64)
+        streaming_checks(:cpu,T)
+    end
+end
+
 module InheritedMHDTests
 include("inherited/runtests.jl")
 end

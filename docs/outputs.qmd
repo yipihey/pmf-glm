@@ -185,3 +185,55 @@ Restart logs/tables can append to earlier outputs. Check for repeated epochs
 and preserve pre-resume metadata when publishing an audit trail. Validate a
 continuous versus split/resumed trajectory before relying on a new checkpoint
 configuration.
+
+## Streaming histories and direct GIF export {#sec-streaming-output}
+
+Set `diagnostics.streaming=true` to emit `streaming.tsv` at regular diagnostic
+epochs. A nonzero named `[streaming]` boost also enables it automatically.
+The vector mean `vbc_{x,y,z}_cms`, total `vbc_rms_cms`, and RMS about the vector
+mean `vbc_dispersion_cms` are **physical peculiar cm/s**, sampled at current DM
+positions by periodic CIC interpolation of gas velocity. The averages use equal
+DM particle masses. `vc_{x,y,z}_cms` records the DM bulk motion;
+`vb_sampled_{x,y,z}_cms` records the gas mean sampled on those particles. They are
+not Eulerian volume averages or a relative-velocity power spectrum. Disabled
+streaming output is absent, not a zero field. `pmf-analyze RUN_DIR` plots it
+alongside the existing baryon/DM density growth histories and spectra.
+{{< src "lib/MHDKernels/src/streaming.jl" "sample_baryon_dm_velocity!" >}}
+
+The legacy `modes.tsv` gas velocities retain their code units; new
+`gas_v_{x,y,z}_cms` rows give explicit physical units. `dm_v_{x,y,z}` are physical
+cm/s Fourier modes of a CIC mass/momentum velocity estimate on the gas mesh,
+using current particle positions for either lattice displacements or absolute
+positions. Empty cells have zero estimated velocity and are counted in
+`dm_velocity_empty_fraction`; a large empty fraction limits the interpretation
+of gas/DM comparisons. `dm_displacement_x` remains a lattice-label diagnostic.
+See [relative velocity conventions and tests](relative-velocities.qmd). Mode wavenumbers use the physical box;
+`spectra.tsv` still uses the separate coordinate box documented above.
+
+For a small full-physics exploratory run:
+
+```sh
+julia --project=. -t 4 scripts/run_pmf.jl examples/streaming-planar-smoke.toml \
+  --backend=cpu --output=results/streaming-planar --dry-run
+julia --project=. -t 4 scripts/run_pmf.jl examples/streaming-planar-smoke.toml \
+  --backend=cpu --output=results/streaming-planar
+uv run pmf-analyze results/streaming-planar
+uv run python -m tools.analysis.render_density_frames \
+  results/streaming-planar/frames results/streaming-planar/animation \
+  --box-ckpc-h 2 --hubble 0.674 --log-min -2 --log-max 2 \
+  --gif results/streaming-planar/animation/gas.gif --fps 8
+uv run python -m tools.analysis.render_density_frames \
+  results/streaming-planar/frames/dm results/streaming-planar/animation-dm \
+  --box-ckpc-h 2 --hubble 0.674 --log-min -2 --log-max 2 \
+  --gif results/streaming-planar/animation-dm/dm.gif --fps 8
+```
+
+`diagnostics.frame_redshifts` resolves the frame directory inside the run.
+`diagnostics.frame_field="both"` writes gas under `frames/` and DM under
+`frames/dm/`; `"gas"` is the default and `"dm"` writes only the latter.
+The existing exact-redshift landing is shared with these requests. The renderer
+sorts manifest rows by cycle, rejects duplicate cycles, preserves fixed color
+limits, and records payload hashes and actual epochs in `frames.json`.
+GIF playback uses equal frame intervals; those intervals do not imply equal
+physical time. GIFs use Pillow through the existing Matplotlib installation;
+MP4 encoding remains available with the FFmpeg recipe above.

@@ -1,5 +1,9 @@
 # Relative velocity patch review and validation — 21 October 2026
 
+This record describes the velocity-only commit `ecb1a63`. The subsequent
+[streaming/planar integration](streaming-2026-10-21.md) has separate combined-source
+validation. Numerical tables here retain their recorded source fingerprints.
+
 The revised patch was prepared against GitHub `main` at
 `d446dd310f4e91161c1889896500ded7ae3687a9` in an isolated checkout. The existing
 uncommitted streaming/planar feature work was preserved separately and is not
@@ -87,7 +91,8 @@ frequent diagnostics. The Metal production gate likewise reached its target,
 passed restart parity (maximum scaled error 1.11e-16), and gave identical final
 fields across diagnostic cadences. CPU restart maximum scaled error was
 3.64e-10. Machine-generated production evidence is in
-[CPU](../data/production-cpu.toml) and [Metal](../data/production-metal.toml).
+[CPU](https://github.com/yipihey/pmf-glm/blob/ecb1a6339f978557694bea41a5912674d45dbcb2/docs/data/production-cpu.toml) and
+[Metal](https://github.com/yipihey/pmf-glm/blob/ecb1a6339f978557694bea41a5912674d45dbcb2/docs/data/production-metal.toml).
 Read each record's source fingerprint, scope, actual status, and run directory;
 the cycle-limited restart controls are not endpoint science runs.
 

@@ -82,6 +82,7 @@ include("integrator_cube.jl") # fused shared-memory cube integrator (GPU through
 include("timestep.jl")        # CFL Δt reduction
 include("diagnostics.jl")     # max|∇·B|, conserved totals
 include("problems.jl")        # initial conditions (smooth waves, Brio-Wu, Orszag-Tang)
+include("streaming.jl")       # coherent boosts and particle-position relative velocities
 include("pmf.jl")             # divergence-free primordial magnetic field initializers
 include("terminal_ct.jl")     # divergence-preserving terminal-regime induction
 include("terminal_pressure.jl") # pressure-implicit terminal response + CT coupling

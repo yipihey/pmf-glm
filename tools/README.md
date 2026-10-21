@@ -252,3 +252,12 @@ distribution. The RECFAST fixture's ChemistryKernels license is retained verbati
 `test/python/fixtures/licenses/`. NumPy/SciPy/Matplotlib are separately installed,
 not vendored. No PDF/raster assets, `.vendor`, campaign output, Julia source, or
 native Metal dependency was copied into these tools.
+
+Streaming histories and direct animation export are described in
+[the output guide](../docs/outputs.qmd#sec-streaming-output). `pmf-analyze`
+discovers optional `streaming.tsv` with physical cm/s statistics sampled at DM
+positions; plots convert them to km/s explicitly. The density frame renderer
+accepts `--gif path.gif --fps 8` and retains the actual redshift captions,
+fixed color limits and raw-payload hashes. Gas and DM frames use separate manifests.
+The independent `tools.reference.streaming.growth` is a controlled matter-era
+moving-background oracle, **REFERENCE_ONLY**, not a primordial transfer generator.

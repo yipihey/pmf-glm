@@ -208,9 +208,10 @@ end
 @kernel function _particle_speed2_k!(work, @Const(vx), @Const(vy), @Const(vz))
     p = @index(Global)
     @inbounds begin
-        x = Float32(vx[p])
-        y = Float32(vy[p])
-        z = Float32(vz[p])
+        T = eltype(work)
+        x = T(vx[p])
+        y = T(vy[p])
+        z = T(vz[p])
         work[p] = x*x + y*y + z*z
     end
 end
@@ -239,7 +240,7 @@ end
 
 function _particle_dt_limit(vmax::Float64, gmax::Float64, maxdisp::Float64)
     if gmax > 0
-        return (sqrt(max(0.0, vmax*vmax + 2*gmax*maxdisp)) - vmax) / gmax
+        return 2maxdisp / (sqrt(vmax*vmax + 2gmax*maxdisp) + vmax)
     elseif vmax > 0
         return maxdisp / vmax
     else
@@ -3384,7 +3385,7 @@ function _run_pmf_chemistry_step!(be_p, be_mhd, s, eint, HII, H2I, HeII, ρtot, 
 end
 
 function _hubble_s(z, h, Om, OL, Or)
-    H0 = 100.0 * h * 1.0e5 / 3.0857e24
+    H0 = 100.0 * h * 1.0e5 / _PMF_MPC_CM
     Ok = 1.0 - Om - OL - Or
     H0 * sqrt(Om * (1 + z)^3 + Ok * (1 + z)^2 + Or * (1 + z)^4 + OL)
 end
@@ -3558,7 +3559,7 @@ function _hydro_time_per_tau(a, h, vunit, lbox_comoving_cm,
     if !(isfinite(lbox_comoving_cm) && lbox_comoving_cm > 0)
         return 1.0
     end
-    H0 = 100.0 * h * 1.0e5 / 3.0857e24
+    H0 = 100.0 * h * 1.0e5 / _PMF_MPC_CM
     scale = isfinite(cosmological_mhd_aref) ?
             sqrt(a * cosmological_mhd_aref) : a
     return scale * vunit / (H0 * lbox_comoving_cm)
@@ -3625,10 +3626,11 @@ copy. This keeps science-movie output to O(N^2) storage per redshift rather
 than retaining full O(N^3) density states.
 """
 function _write_density_frame!(frame_dir::AbstractString, hostrho, hostslice, hostproj,
-                               rho, N::Int, z::Real, cycle::Int)
+                               rho, N::Int, z::Real, cycle::Int; density_offset=0)
     isempty(frame_dir) && return
     mkpath(frame_dir)
     copyto!(hostrho, rho)
+    density_offset == 0 || (hostrho .+= Float32(density_offset))
     mid = fld(N, 2) + 1
     @views copyto!(hostslice, hostrho[:, :, mid])
     @inbounds for j in 1:N, i in 1:N
@@ -3638,7 +3640,7 @@ function _write_density_frame!(frame_dir::AbstractString, hostrho, hostslice, ho
         end
         hostproj[i, j] = vmax
     end
-    tag = @sprintf("z%011.5f", Float64(z))
+    tag = @sprintf("cycle%09d_z%.12g", cycle, Float64(z))
     slice_name = "density_slice_$(tag).f32"
     proj_name = "density_maxproj_$(tag).f32"
     open(joinpath(frame_dir, slice_name), "w") do io
@@ -3654,6 +3656,21 @@ function _write_density_frame!(frame_dir::AbstractString, hostrho, hostslice, ho
         println(io, join((cycle, Float64(z), N, slice_name, proj_name, "julia-column-major"), '\t'))
     end
     return nothing
+end
+
+function _write_run_density_frames!(frame_dir, hostrho, hostslice, hostproj,
+        s, rho_dm, positions, velocities, N, z, cycle;
+        field, lattice_displacements)
+    if field in (:gas,:both)
+        _write_density_frame!(frame_dir,hostrho,hostslice,hostproj,s.U[1],N,z,cycle)
+    end
+    if field in (:dm,:both)
+        _deposit_particles!(rho_dm,positions...,velocities...;
+            N=N,disp=0,lattice_displacements=lattice_displacements)
+        KA.synchronize(s.be)
+        _write_density_frame!(joinpath(frame_dir,"dm"),hostrho,hostslice,hostproj,
+            rho_dm,N,z,cycle;density_offset=lattice_displacements ? 1 : 0)
+    end
 end
 
 function _write_f32_array_atomic(path::AbstractString, array)
@@ -4040,10 +4057,9 @@ function _write_linear_mode!(path; be, s, rho_dm, scratch, N, gravity,
                              omega_b=0.049,
                              rho_dm_mean=one(eltype(rho_dm)),
                              particle_displacement_x=nothing,
-                             particle_velocity_x=nothing, particle_velocities=nothing,
+                             particle_velocity_x=nothing, particle_velocities=nothing, gas_velocity_unit=NaN,
+                             particle_positions=nothing, lattice_displacements=true,
                              particle_velocity_cms_factor=NaN,
-                             particle_positions=nothing,
-                             lattice_displacements=true,
                              physical_box_ckpc_h=NaN,
                              gas_delta=nothing, HII=nothing, H2I=nothing,
                              HeII=nothing,
@@ -4067,9 +4083,9 @@ function _write_linear_mode!(path; be, s, rho_dm, scratch, N, gravity,
                                                        kmode; mean=gas_mean))
     for (name, momentum) in (("gas_v_x", s.U[2]), ("gas_v_y", s.U[3]),
                              ("gas_v_z", s.U[4]))
-        push!(rows, name => _device_complex_velocity_mode!(be, scratch, momentum,
-                                                            s.U[1], N, kmode,
-                                                            s.smallr))
+        mode = _device_complex_velocity_mode!(be, scratch, momentum,s.U[1],N,kmode,s.smallr)
+        push!(rows,name=>mode)
+        isfinite(gas_velocity_unit) && push!(rows,name*"_cms"=>gas_velocity_unit*mode)
     end
     MHDKernels.terminal_magnetic_force!(s, s.scratch[1], s.scratch[2],
                                         s.scratch[3])
@@ -4157,8 +4173,8 @@ function _write_linear_mode!(path; be, s, rho_dm, scratch, N, gravity,
             ))
     end
 
-    mode_box=isfinite(physical_box_ckpc_h) ? physical_box_ckpc_h : boxsize
-    k_box = 2π * Float64(kmode) / Float64(mode_box)
+    k_box = isfinite(physical_box_ckpc_h) ?
+            2π * Float64(kmode) / physical_box_ckpc_h : NaN
     k_mpc = 1000.0 * Float64(hubble) * k_box
     exists = isfile(path)
     mkpath(dirname(path))
@@ -4175,11 +4191,41 @@ function _write_linear_mode!(path; be, s, rho_dm, scratch, N, gravity,
     return nothing
 end
 
+"Write DM-mass-weighted streaming statistics at actual particle positions."
+function _write_streaming!(path, s, positions, velocities, scratch;
+                           a, cycle, measured, gas_unit, dm_unit,
+                           lattice_displacements)
+    isempty(path) && return
+    out = s.scratch[1:3]
+    MHDKernels.sample_baryon_dm_velocity!(out, s, positions, velocities;
+        lattice_displacements=lattice_displacements, gas_unit=gas_unit, dm_unit=dm_unit)
+    KA.synchronize(s.be)
+    means = ntuple(d->Float64(sum(out[d]))/length(out[d]),3)
+    work = reshape(scratch,:)
+    second = ntuple(3) do d
+        @. work = out[d]^2
+        Float64(sum(work))/length(work)
+    end
+    variance = ntuple(3) do d
+        mean_d = eltype(work)(means[d])
+        @. work = (out[d]-mean_d)^2
+        Float64(sum(work))/length(work)
+    end
+    dm_means = ntuple(d->dm_unit*Float64(sum(velocities[d]))/length(velocities[d]),3)
+    exists = isfile(path)
+    mkpath(dirname(path))
+    open(path,"a") do io
+        exists || println(io,"cycle\tmeasured\tz\ta\tvbc_x_cms\tvbc_y_cms\tvbc_z_cms\tvbc_rms_cms\tvbc_dispersion_cms\tvc_x_cms\tvc_y_cms\tvc_z_cms\tvb_sampled_x_cms\tvb_sampled_y_cms\tvb_sampled_z_cms")
+        println(io,join((cycle,measured,a_to_z(a),a,means...,sqrt(sum(second)),
+            sqrt(sum(variance)),dm_means...,
+            (means .+ dm_means)...),'\t'))
+    end
+end
+
 function _emit_diagnostics!(; be_p, s, ρdm, scratch, px, py, pz, vx, vy, vz,
                             N, ncells, gravity, cycle, measured, a, pk_path,
                             history_path, pdf_path, pdf_counts, pdf_loglo, pdf_loghi,
                             nmu, nbins, boxsize, axis, kmax=nothing,
-                            physical_box_ckpc_h=NaN,
                             lattice_displacements=false,
                             HII=nothing, H2I=nothing, HeII=nothing, fh=0.76f0,
                             btrans0=NaN, density_kmode=1,
@@ -4190,6 +4236,7 @@ function _emit_diagnostics!(; be_p, s, ρdm, scratch, px, py, pz, vx, vy, vz,
                             radiation_photon_state=nothing,
                             radiation_drag_rate=NaN,
                             temperature_velocity_unit2=NaN,
+                            physical_box_ckpc_h=NaN, gas_velocity_unit=NaN, streaming_path="",
                             neutral_hydrogen_storage=false,
                             centered_hydrogen_storage=false,
                             hydrogen_reference=1.0)
@@ -4198,6 +4245,12 @@ function _emit_diagnostics!(; be_p, s, ρdm, scratch, px, py, pz, vx, vy, vz,
         _deposit_particles!(ρdm, px, py, pz, vx, vy, vz;
                             N=N, disp=0, lattice_displacements=lattice_displacements)
         KA.synchronize(be_p)
+    end
+    if gravity && !isempty(streaming_path)
+        _write_streaming!(streaming_path,s,(px,py,pz),(vx,vy,vz),scratch;
+            a=a,cycle=cycle,measured=measured,gas_unit=gas_velocity_unit,
+            dm_unit=_particle_velocity_cms_per_code(a,physical_box_ckpc_h),
+            lattice_displacements=lattice_displacements)
     end
     br = _device_brms!(be_p, s, scratch)
     divn = _device_divb_norm!(be_p, s, scratch, br)
@@ -4248,10 +4301,11 @@ function _emit_diagnostics!(; be_p, s, ρdm, scratch, px, py, pz, vx, vy, vz,
                             particle_velocities=(vx,vy,vz),
                             particle_positions=(px,py,pz),
                             lattice_displacements=lattice_displacements,
-                            physical_box_ckpc_h=physical_box_ckpc_h,
+                            gas_velocity_unit=gas_velocity_unit,
                             particle_velocity_cms_factor=
                                 isfinite(physical_box_ckpc_h) ?
                                 _particle_velocity_cms_per_code(a, physical_box_ckpc_h) : NaN,
+                            physical_box_ckpc_h=physical_box_ckpc_h,
                             gas_delta=gas_delta,
                             HII=HII, H2I=H2I, HeII=HeII, fh=fh,
                             temperature_velocity_unit2=temperature_velocity_unit2,
@@ -4846,6 +4900,21 @@ function main()
     cosmological_mhd_scaling === :jedamzik && !isfinite(pmf_b_aref) &&
         error("MHD_COSMOLOGICAL_MHD_SCALING=jedamzik requires MHD_PMF_B0_NG and the comoving clock")
     cosmological_mhd_aref = cosmological_mhd_scaling === :jedamzik ? pmf_b_aref : NaN
+    physical_box_ckpc_h = terminal_lbox_cm / _PMF_KPC_CM * hub
+    streaming_velocity = ntuple(d->parse(Float64,get(ENV,
+        ("MHD_STREAMING_VX_KMS","MHD_STREAMING_VY_KMS","MHD_STREAMING_VZ_KMS")[d],"0")),3)
+    all(isfinite,streaming_velocity) || error("streaming velocities must be finite")
+    streaming_active = any(!iszero,streaming_velocity)
+    streaming_active && !(zrun && gravity && gravity_gas_kick &&
+        cosmological_mhd_scaling === :jedamzik) && error(
+        "coherent streaming requires cosmology, gravity, gas gravity, and jedamzik scaling")
+    streaming_active && !isempty(initial_state_dir) && error(
+        "streaming boost cannot be combined with an imported correlated initial state")
+    invariant_axis = parse(Int,get(ENV,"MHD_PMF_INVARIANT_AXIS","0"))
+    invariant_axis in 0:3 || error("MHD_PMF_INVARIANT_AXIS must be 0, 1, 2, or 3")
+    invariant_axis != 0 && (pmf_init !== :batchelor || !isempty(initial_state_dir)) &&
+        error("planar initialization requires built-in Batchelor ICs")
+
     if isfinite(pmf_b0_ng)
         brms = _pmf_code_brms_from_comoving_ng(pmf_b0_ng, pmf_b_zref, hub, Ob, chem_vunit)
     end
@@ -4951,6 +5020,9 @@ function main()
         0 < pmf_kmode < N ÷ 2 ||
             error("matched linear modes require 0 < MHD_PMF_KMODE < N/2")
     end
+    streaming_path = get(ENV,"MHD_STREAMING_TSV","")
+    !isempty(streaming_path) && !(zrun && gravity && isfinite(physical_box_ckpc_h)) &&
+        error("streaming diagnostics require a cosmological physical box and gravity")
     pdf_path = get(ENV, "MHD_PDF_TSV", "")
     adaptive_diag_rel = parse(Float64, get(ENV, "MHD_ADAPTIVE_DIAG_REL", "0"))
     adaptive_diag_rel >= 0 || error("MHD_ADAPTIVE_DIAG_REL must be non-negative")
@@ -4972,6 +5044,9 @@ function main()
     frame_zs = _parse_z_outputs(get(ENV, "MHD_DENSITY_FRAME_ZS", ""))
     !isempty(frame_zs) && isempty(frame_dir) &&
         error("MHD_DENSITY_FRAME_ZS requires MHD_DENSITY_FRAME_DIR")
+    frame_field = Symbol(get(ENV,"MHD_DENSITY_FRAME_FIELD","gas"))
+    frame_field in (:gas,:dm,:both) || error("frame field must be gas, dm, or both")
+    frame_field != :gas && !gravity && error("DM frames require gravity")
     frame_next = Ref(1)
     pk_nmu = parse(Int, get(ENV, "MHD_PK_NMU", "4"))
     pk_nbins = parse(Int, get(ENV, "MHD_PK_NBINS", string(max(1, N ÷ 2))))
@@ -5098,7 +5173,8 @@ function main()
                                                fixed_mode_power=pmf_fixed_mode_power,
                                                mode_realization=pmf_mode_realization,
                                                realization_box=pmf_realization_box,
-                                               minimum_cells_per_wavelength=pmf_required_cells)
+                                               minimum_cells_per_wavelength=pmf_required_cells,
+                                               invariant_axis=invariant_axis)
             else
                 MHDKernels.init_pmf_batchelor_tiled!(s; brms=brms, rho0=1, p0=p0,
                                                      box=boxsize, tile_box=pmf_tile_box,
@@ -5115,7 +5191,8 @@ function main()
                                                      fixed_mode_power=pmf_fixed_mode_power,
                                                      mode_realization=pmf_mode_realization,
                                                      realization_box=pmf_realization_box,
-                                                     minimum_cells_per_wavelength=pmf_required_cells)
+                                                     minimum_cells_per_wavelength=pmf_required_cells,
+                                               invariant_axis=invariant_axis)
             end
             merge(base, (btrans0=Float32(NaN), alfven_bguide=Float32(NaN),
                          alfven_bpert=Float32(NaN)))
@@ -5329,6 +5406,14 @@ function main()
         :moments,:photon_moments,:moments_exponential,
         :photon_moments_exponential) ?
         MHDKernels.allocate_photon_moment_state(s) : nothing
+    if streaming_active
+        initial_velocity_unit = _cosmological_velocity_unit(
+            chem_vunit,z_to_a(zstart),cosmological_mhd_aref)
+        MHDKernels.boost_gas_velocity!(s,streaming_velocity .* (1e5/initial_velocity_unit))
+        KA.synchronize(be_mhd)
+        @printf("STREAMING_IC frame=DM_rest sign=vb-vc z=%.9g vbc_kms=(%.9g,%.9g,%.9g)\n",
+                zstart,streaming_velocity...)
+    end
     if radiation_photon_state !== nothing
         MHDKernels.initialize_photon_moments!(radiation_photon_state,
             radiation_workspace,s;
@@ -5430,6 +5515,7 @@ function main()
         gravity_drag_max_impulse=gravity_drag_max_impulse,
         backend=BACKEND_NAME, precision=string(T), N=N, zstart=zstart, zend=zend,
         boxsize=boxsize, pmf_init=pmf_init, pmf_b0_ng=pmf_b0_ng,
+        streaming_velocity=streaming_velocity, invariant_axis=invariant_axis,
         pmf_kmode=pmf_kmode,
         meanfield_theta=meanfield_theta,
         meanfield_polarization=meanfield_polarization,
@@ -5809,7 +5895,8 @@ function main()
                            btrans0=Float64(st.btrans0), density_kmode=pmf_kmode,
                            mode_history_path=initial_history ? mode_history_path : "",
                            mode_kmode=pmf_kmode, hubble=hub, omega_b=Ob,
-                           physical_box_ckpc_h=hub*terminal_lbox_cm/_PMF_KPC_CM,
+                           physical_box_ckpc_h=physical_box_ckpc_h, streaming_path=streaming_path,
+                           gas_velocity_unit=_cosmological_velocity_unit(chem_vunit,a,cosmological_mhd_aref),
                            radiation_workspace=radiation_workspace,
                            radiation_photon_state=radiation_photon_state,
                            neutral_hydrogen_storage=chem_neutral_hydrogen_storage,
@@ -5825,8 +5912,9 @@ function main()
 
     if !resumed_from_checkpoint && zrun && frame_next[] <= length(frame_zs) &&
        _reached_output_z(a_to_z(a), frame_zs[frame_next[]])
-        _write_density_frame!(frame_dir, frame_hostrho, frame_hostslice, frame_hostproj,
-                              s.U[1], Int(N), a_to_z(a), 0)
+        _write_run_density_frames!(frame_dir, frame_hostrho, frame_hostslice, frame_hostproj,
+            s,ρdm,(px,py,pz),(vx,vy,vz),Int(N),a_to_z(a),0;
+            field=frame_field,lattice_displacements=lattice_displacements)
         while frame_next[] <= length(frame_zs) &&
               _reached_output_z(a_to_z(a), frame_zs[frame_next[]])
             frame_next[] += 1
@@ -6776,8 +6864,9 @@ function main()
             end
             if measuring && frame_next[] <= length(frame_zs) &&
                _reached_output_z(a_to_z(a), frame_zs[frame_next[]])
-                _write_density_frame!(frame_dir, frame_hostrho, frame_hostslice, frame_hostproj,
-                                      s.U[1], Int(N), a_to_z(a), cyc)
+                _write_run_density_frames!(frame_dir, frame_hostrho, frame_hostslice, frame_hostproj,
+                    s,ρdm,(px,py,pz),(vx,vy,vz),Int(N),a_to_z(a),cyc;
+                    field=frame_field,lattice_displacements=lattice_displacements)
                 while frame_next[] <= length(frame_zs) &&
                       _reached_output_z(a_to_z(a), frame_zs[frame_next[]])
                     frame_next[] += 1
@@ -6827,7 +6916,8 @@ function main()
                                        density_kmode=pmf_kmode,
                                        mode_history_path=mode_history_path,
                                        mode_kmode=pmf_kmode, hubble=hub, omega_b=Ob,
-                           physical_box_ckpc_h=hub*terminal_lbox_cm/_PMF_KPC_CM,
+                                       physical_box_ckpc_h=physical_box_ckpc_h, streaming_path=streaming_path,
+                                       gas_velocity_unit=_cosmological_velocity_unit(chem_vunit,a,cosmological_mhd_aref),
                                        radiation_workspace=radiation_workspace,
                                        radiation_photon_state=radiation_photon_state,
                                        radiation_drag_rate=drag_impulse /
@@ -6921,7 +7011,8 @@ function main()
                            btrans0=Float64(st.btrans0), density_kmode=pmf_kmode,
                            mode_history_path=mode_history_path,
                            mode_kmode=pmf_kmode, hubble=hub, omega_b=Ob,
-                           physical_box_ckpc_h=hub*terminal_lbox_cm/_PMF_KPC_CM,
+                           physical_box_ckpc_h=physical_box_ckpc_h, streaming_path=streaming_path,
+                           gas_velocity_unit=_cosmological_velocity_unit(chem_vunit,a,cosmological_mhd_aref),
                            radiation_workspace=radiation_workspace,
                            radiation_photon_state=radiation_photon_state,
                            radiation_drag_rate=drag_impulse /

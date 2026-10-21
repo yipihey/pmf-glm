@@ -75,6 +75,14 @@ are opt-in; inline tables are the default. Standard outputs include magnetic,
 baryon/DM density, photon and slip spectra, magnetic-pressure/tension force
 spectra, density PDFs, mean ionization, and energy ledgers.
 
+For controlled baryon–DM streaming and planar three-component (2.5D) studies,
+start with `examples/streaming-planar-smoke.toml`. It records physical relative
+velocities and separate gas/DM density frames; the renderer supports direct GIF
+export. The planar mode uses the existing 3D cube, so memory still scales as
+N cubed. See [streaming physics and limits](docs/physics.qmd#sec-streaming) and
+[the animation workflow](docs/outputs.qmd#sec-streaming-output). These controls
+do not generate primordial cosmological density/velocity transfer initial conditions.
+
 ## Tests and Benchmarks
 
 ```sh
