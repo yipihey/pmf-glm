@@ -68,7 +68,7 @@ let base = joinpath(@__DIR__,"..","examples")
     @test_throws ArgumentError ctrun("environment"=>Dict("MHD_GLM_PROJECT_EVERY"=>5))
     @test_throws ArgumentError ctrun("environment"=>Dict("MHD_INTEGRATOR"=>"cube"))
     @test ctrun("environment"=>Dict("MHD_INTEGRATOR"=>"ref")) isa RunConfig
-    @test_throws ArgumentError RunConfig(Dict("run"=>Dict("mhd_solver"=>"ct","backend"=>"metal")))   # 38/31 Metal buffer arguments
+    @test RunConfig(Dict("run"=>Dict("mhd_solver"=>"ct","backend"=>"metal"))) isa RunConfig
     # The same options remain accepted for GLM.
     @test RunConfig(Dict("physics"=>Dict("drag_mode"=>"terminal","glm_project_every"=>1))) isa RunConfig
 end

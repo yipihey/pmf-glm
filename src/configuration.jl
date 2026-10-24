@@ -141,9 +141,6 @@ function _validate_ct_environment(env::AbstractDict)
         "overwrite cell-centred B and cannot update CT faces; use radiation, godunov, or explicit"))
     lowercase(get(env, "MHD_INTEGRATOR", "ref")) == "cube" && throw(ArgumentError(
         "mhd_solver=\"ct\" requires MHD_INTEGRATOR=ref; the cube integrators are GLM-only"))
-    lowercase(get(env, "MHD_BACKEND", "cpu")) == "metal" && throw(ArgumentError(
-        "mhd_solver=\"ct\" is not available on the Metal backend: the CT reference kernel needs " *
-        "38 buffer arguments and Metal allows 31; run CT on the CPU backend"))
     if haskey(env, "MHD_GLM_PROJECT_EVERY")
         n = tryparse(Int, strip(env["MHD_GLM_PROJECT_EVERY"]))
         n !== nothing && n > 0 && throw(ArgumentError(

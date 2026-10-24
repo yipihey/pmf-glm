@@ -182,7 +182,7 @@ end
     c = allocate_state(backend(:cpu), Float64, (8,8,8); dx=1/8, mhd_solver=:ct)
     @test mhd_solver(g) === :glm && !uses_ct(g) && g.ct === nothing
     @test mhd_solver(c) === :ct && uses_ct(c) && c.ct isa CTState
-    @test length(fieldnames(CTState)) == 18
+    @test length(fieldnames(CTState)) == 19 && length(c.ct.packed) == 18*length(c.U[1])
     @test_throws ErrorException allocate_state(backend(:cpu), Float64, (8,8,8); dx=1/8, mhd_solver=:bogus)
     @test_throws ErrorException allocate_state(backend(:cpu), Float64, (8,8,8); dx=1/8,
                                                mhd_solver=:ct, bcs=(:outflow,:periodic,:periodic))

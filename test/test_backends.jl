@@ -327,6 +327,45 @@ function _test_chemistry(name)
     end
 end
 
+# Constrained transport runs the :ref integrator on every backend (the CT kernel packs
+# its arrays and scalars to fit Metal's 31 kernel arguments).
+function _test_ct_mhd(name)
+    n = 16
+    fields = _smooth_fields(n)
+    initial_mass = _mass(fields)
+    for riemann in (:hlld, :hll)
+        @testset "ct / plm / $riemann" begin
+            states = map((:cpu, name)) do be
+                s = MHD.allocate_state(MHD.backend(be), Float32, (n,n,n); dx=1/n,
+                                       gamma=5/3, recon=:plm, riemann, mhd_solver=:ct)
+                for v in 1:9
+                    copyto!(s.U[v], fields[v])
+                end
+                MHD.ct_faces_from_cells!(s)
+                s
+            end
+            cpu, device = states
+            dt, _ = MHD.compute_dt(cpu; cfl=0.08)
+            for s in states
+                for _ in 1:3
+                    MHD.step!(s, dt)
+                end
+                MHD.step_drag_godunov!(s, dt; drag_impulse=0.2, ch=0, integrator=:ref)
+            end
+            host_cpu = MHD.fields_to_host(cpu)
+            host_device = MHD.fields_to_host(device)
+            _assert_fields(host_cpu, host_device)
+            for f in (:bxf, :byf, :bzf)
+                a = MHD.to_host(getfield(cpu.ct, f)); b = MHD.to_host(getfield(device.ct, f))
+                @test maximum(abs, b .- a) <= 2f-6 + 5f-5 * maximum(abs, a)
+            end
+            brms = sqrt(sum(v -> sum(abs2, host_device[v]), 6:8) / n^3)
+            @test MHD.max_divb_face(device) * Float64(device.dx) / brms < 1e-5
+            @test abs(_mass(host_device) / initial_mass - 1) < 3e-6
+        end
+    end
+end
+
 include("streaming_checks.jl")
 include("relative_velocity_checks.jl")
 
@@ -334,6 +373,7 @@ function _run_backend_tests(name)
     name === :cuda && CUDA.allowscalar(false)
     @testset "PMFGLM $name Float32 backend" begin
         @testset "Smooth MHD and mass conservation" _test_smooth_mhd(name)
+        @testset "Constrained-transport MHD" _test_ct_mhd(name)
         @testset "Native FFT roundtrip and cache isolation" _test_fft(name)
         @testset "Periodic Poisson" _test_poisson(name)
         @testset "Streaming and planar invariance" streaming_checks(name,Float32)

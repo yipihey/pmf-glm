@@ -36,8 +36,6 @@
 
 export max_divb_face, ct_faces_from_cells!, ct_faces_from_potential!
 
-"`_ct_kernel_arrays(s)` — the 18 CT arrays for CT states; harmless placeholders for GLM."
-_ct_kernel_arrays(s::MHDState) = uses_ct(s) ? ct_arrays(s.ct) : ntuple(_ -> s.U[1], 18)
 
 function _require_glm(s::MHDState, what::AbstractString)
     uses_ct(s) && error("$what overwrites cell-centred B and is not available for " *

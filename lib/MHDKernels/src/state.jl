@@ -29,18 +29,30 @@ length-`ncells` device vectors indexed like the cell fields, cell `c=(i,j,k)`:
   * `ex, ey, ez` — edge EMFs: `ez[c]` at `(i-1/2,j-1/2,k)`, `ex[c]` at
     `(i,j-1/2,k-1/2)`, `ey[c]` at `(i-1/2,j,k-1/2)`.
 
+All 18 are contiguous views, in this order, of ONE device buffer `packed` of length
+`18*ncells`: the fused Godunov kernel takes that single buffer (slot `q` of cell `c` at
+`(q-1)*ncells + c`), because Metal allows a kernel 31 buffer arguments and counts every
+scalar argument as one: with 18 separate CT arrays it failed with 38/31.
+
 (The struct lives in `state.jl` because `MHDState` has a field of this type.)
 """
-struct CTState{A}
-    bxf::A; byf::A; bzf::A
-    mfx::A; mfy::A; mfz::A
-    fxby::A; fxbz::A; fybx::A; fybz::A; fzbx::A; fzby::A
-    ecx::A; ecy::A; ecz::A
-    ex::A; ey::A; ez::A
+struct CTState{A,V}
+    packed::A
+    bxf::V; byf::V; bzf::V
+    mfx::V; mfy::V; mfz::V
+    fxby::V; fxbz::V; fybx::V; fybz::V; fzbx::V; fzby::V
+    ecx::V; ecy::V; ecz::V
+    ex::V; ey::V; ez::V
 end
 
-"`ct_arrays(ct)` — the 18 CT arrays as a tuple (kernel argument), in field order."
-ct_arrays(c::CTState) = ntuple(i -> getfield(c, i), 18)
+function CTState(packed::AbstractVector, nc::Int)
+    length(packed) == 18nc || error("CT packed buffer has $(length(packed)) entries, expected $(18nc)")
+    v = ntuple(q -> view(packed, (q-1)*nc+1:q*nc), 18)
+    CTState{typeof(packed),eltype(v)}(packed, v...)
+end
+
+"`ct_arrays(ct)` — the 18 CT field views as a tuple, in field order."
+ct_arrays(c::CTState) = ntuple(i -> getfield(c, i + 1), 18)
 
 mutable struct MHDState{T,A,B}
     U::NTuple{NVAR,A}        # conserved
@@ -57,7 +69,7 @@ mutable struct MHDState{T,A,B}
     bcs::NTuple{3,Symbol}    # per-axis: :periodic / :outflow / :reflecting
     recon::Symbol            # :plm (MonCen), :plm_minmod, or :ppm (local CW84)
     be::B
-    ct::Union{Nothing,CTState{A}}   # face-staggered CT storage (`mhd_solver=:ct`), else nothing
+    ct::Union{Nothing,CTState{A}}   # (CTState{A,V} for any view type V) face-staggered CT storage (`mhd_solver=:ct`), else nothing
 end
 
 # GLM-only construction (the historic 14-field form).
@@ -117,8 +129,7 @@ function allocate_state(be, ::Type{T}, dims::NTuple{3,Int};
     U  = ntuple(_ -> device_zeros(be, T, (nc,)), NVAR)
     sc = ntuple(_ -> device_zeros(be, T, (nc,)), NVAR)
     rsym = riemann === nothing ? (use_hlld ? :hlld : :llf) : Symbol(riemann)
-    ct = mhd_solver === :ct ?
-         CTState{eltype(U)}((device_zeros(be, T, (nc,)) for _ in 1:18)...) : nothing
+    ct = mhd_solver === :ct ? CTState(device_zeros(be, T, (18nc,)), nc) : nothing
     MHDState{T,eltype(U),typeof(be)}(U, sc, dims, T(dx), T(gamma), T(smallr), T(pfl),
                                      T(llf_dmin), T(llf_pmin), use_hlld, rsym, bcs, recon, be, ct)
 end

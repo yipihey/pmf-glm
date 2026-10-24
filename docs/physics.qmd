@@ -80,11 +80,17 @@ normalization values remain those of the generated field.
 
 **Limits.** CT is periodic-only and implemented on the `ref` integrator only; the
 `cube` integrators, terminal and hybrid drag, and the GLM projection are
-rejected. On Metal the CT `ref` kernel does not compile: it needs 38 buffer
-arguments and Metal allows 31 (`Total number of indirect argument buffer
-resources exceeded for buffers (38/31)`, observed on an Apple M5 Max), so
-`mhd_solver = "ct"` is rejected for `backend = "metal"`. CUDA is `NOT_RUN`. It allocates 18 extra `N^3` arrays (three face fields and 15 flux/EMF
-workspace arrays) on top of GLM's 18. The explicit step is not limited by the
+rejected. Metal allows 31 buffer arguments per kernel and counts each scalar
+argument as one, so the CT kernel (`step_ref_ct_kernel!`, generated from the same
+body as the GLM `step_ref_kernel!`) takes the 18 CT arrays as one packed buffer
+and the grid/BC integers as one tuple; it runs on Metal. (GLM's `ref` kernel
+still exceeds the limit on Metal, as before CT; GLM runs there use `cube`.)
+CUDA is `NOT_RUN`. CT allocates 18 extra `N^3` arrays (three face fields and 15
+flux/EMF workspace arrays, in one buffer) on top of GLM's 18. From a state at
+rest the face mass fluxes are rounding noise and the upwind choice of the edge
+EMF follows their sign, so CT trajectories on different devices separate at
+first faster than with a definite flow (Metal vs CPU Float32, 32^3 PMF field,
+20 steps: 1.2e-4 relative from rest, 1.3e-6 with a uniform flow). The explicit step is not limited by the
 GLM cleaning speed. `divb_face_dx_over_brms` in `history.tsv` and
 `performance.tsv` is the exact face divergence (empty/`NaN` for GLM); the
 centred `divBdx_over_brms` is a different diagnostic and is not zero for CT.

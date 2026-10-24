@@ -4847,11 +4847,6 @@ function main()
             "MHD_SOLVER=ct does not support MHD_DRAG_DT_MODE=$(drag_dt_mode): the terminal " *
             "closures overwrite cell-centred B and cannot update CT faces; use radiation, " *
             "godunov, or explicit")
-        BACKEND_NAME === :metal && error(
-            "MHD_SOLVER=ct is not available on the Metal backend: the CT :ref kernel " *
-            "needs 38 buffer arguments and Metal allows 31 (measured: 'Total number of " *
-            "indirect argument buffer resources exceeded for buffers (38/31)'); run CT on " *
-            "the CPU backend (CUDA is NOT_RUN)")
         haskey(ENV, "MHD_GLM_PROJECT_EVERY") &&
             parse(Int, ENV["MHD_GLM_PROJECT_EVERY"]) > 0 && error(
             "MHD_SOLVER=ct does not use GLM B projection: MHD_GLM_PROJECT_EVERY=" *

@@ -79,7 +79,7 @@ before any state is allocated (both in the TOML validation and again in the driv
 | `physics.drag_mode` | `terminal` and `hybrid` are errors (they overwrite cell-centred B) |
 | `physics.glm_project_every` | Default `0` (GLM radiation runs default to projecting every cycle); a value above zero is an error |
 | `physics.glm_ch_factor`, `MHD_GLM_CR` | Unused. The explicit step is not limited by the GLM speed `ch`; `dt` is the plain CFL step |
-| `backend` | `"metal"` is an error (the CT kernel exceeds Metal's 31 buffer arguments); CUDA is not run |
+| `backend` | CPU and Metal; CUDA is not run |
 | Checkpoints | A checkpoint without an `mhd_solver` key is a GLM checkpoint. GLM and CT checkpoints cannot be resumed as one another; CT checkpoints store the face fields |
 
 Consequently a CT and a GLM run at equal `cfl` do not take identical steps

@@ -121,8 +121,7 @@ documented differences are not discrepancies to fit away:
 - The remaining agreement criteria are those of the
   [science matrix](#sec-science-matrix): define tolerances before measuring, and
   refine timestep and grid separately for each solver. CT runs on the CPU
-  backend only: Metal fails to compile the CT kernel (38 of 31 buffer
-  arguments) and CUDA is `NOT_RUN`.
+  and Metal backends; CUDA is `NOT_RUN`.
 
 ## Float32 and thermal floors {#sec-thermal-floors}
 
