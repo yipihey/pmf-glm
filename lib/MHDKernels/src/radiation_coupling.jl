@@ -1499,6 +1499,23 @@ function _radiation_state_bounds!(ws::RadiationWorkspace,s::MHDState)
      eint_max=Float64(maximum(ws.fft_real)))
 end
 
+# CT (:ref) trial admissibility. The :cube kernel flags a cell inadmissible when rho is
+# below the LLF gate, any field is non-finite, or the internal energy E-ek-eb falls below
+# pfl/(gamma-1); the host then sees a negative density. The :ref kernel has no such flag, so
+# CT evaluates the same conditions on the stored trial state (cell B = face average, i.e.
+# exactly what the next step reconstructs from): density gate on the host, finite
+# internal energy and eint >= pfl/(gamma-1) in one device pass over `ws.fft_real`. GLM
+# keeps the single-argument density check (its :cube kernel already encodes the rest).
+function _radiation_trial_admissible(s::MHDState,ws::RadiationWorkspace)
+    _radiation_trial_admissible(s) || return false
+    uses_ct(s) || return true
+    _radiation_internal_energy_k!(s.be)(ws.fft_real,s.U[1],s.U[2],s.U[3],
+        s.U[4],s.U[5],s.U[6],s.U[7],s.U[8],s.smallr;ndrange=ncells(s))
+    KA.synchronize(s.be)
+    eint_min=Float64(minimum(ws.fft_real))
+    isfinite(eint_min) && eint_min>=Float64(s.pfl)/(Float64(s.γ)-1)
+end
+
 @kernel function _radiation_fallback_mask_k!(mask,@Const(trial_rho),N)
     c=@index(Global)
     @inbounds begin
@@ -1811,7 +1828,7 @@ function step_radiation_godunov!(s::MHDState{T},ws,dt::Real;
             error("unknown radiation integrator :$integrator (have :ref, :cube)")
         end
         if use_fallback
-            trial_admissible=_radiation_trial_admissible(s)
+            trial_admissible=_radiation_trial_admissible(s,ws)
             wave_limit=Float64(positivity_wave_growth_limit)*
                        max(Float64(ch),eps(Float64))
             if trial_admissible
@@ -1842,7 +1859,7 @@ function step_radiation_godunov!(s::MHDState{T},ws,dt::Real;
                         track_magnetic=ws.magnetic_residual!==nothing,
                         robust_fallback=true)
                 end
-                robust_admissible=_radiation_trial_admissible(s)
+                robust_admissible=_radiation_trial_admissible(s,ws)
                 robust_wave_speed=robust_admissible ?
                     Float64(max_wavespeed!(ws.fft_real,s)) : 0.0
                 robust_rejected=!robust_admissible ||

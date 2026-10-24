@@ -30,7 +30,7 @@ function pair(label, u, p0, cfl, ns; kw...)
     g, c
 end
 # calibration: benign
-g0, c0 = pair("benign (calibration)", 10f0, 1f-5, 0.4f0, 8)
+g0, c0 = pair("benign (calibration)", 5f0, 1f-3, 0.4f0, 8)
 d0 = rel_diffs(c0.s, g0.s)
 tol = map(x -> max(3x, 2e-3), d0)
 @printf("d0  : rho=%.3e mom=%.3e E=%.3e B=%.3e\n", d0...)
@@ -47,12 +47,13 @@ function verdict(label, g, c)
         branch(c), c.tm.plm_hll_fallback_steps, c.tm.subdivision_steps, div, div < 1e-5)
 end
 verdict("benign", g0, c0)
-ga, ca = pair("A subdivision", 10f0, 1f-5, 1.5f0, 1);  verdict("A", ga, ca)
-gb, cb = pair("B robust-PLM/HLL", 5f0, 1f-4, 0.9f0, 8); verdict("B", gb, cb)
+ga, ca = pair("A subdivision", 10f0, 1f-3, 1.5f0, 1);  verdict("A", ga, ca)
+gb, cb = pair("B1 multi-step", 10f0, 1f-3, 0.4f0, 8); verdict("B1", gb, cb)
+gb2, cb2 = pair("B2 multi-step", 5f0, 1f-4, 0.9f0, 8); verdict("B2", gb2, cb2)
 # C: checkpoint-fallback error path (problem A): both must throw, and leave the state at its pre-step value.
-(dt, ch) = setup(10f0, 1f-5, 1.5f0)
+(dt, ch) = setup(10f0, 1f-3, 1.5f0)
 for (nm, solver, integ) in (("GLM :cube", :glm, glm_int), ("CT  :ref", :ct, :ref))
-    s = make_state(solver, bname; u=10f0, p0=1f-5)
+    s = make_state(solver, bname; u=10f0, p0=1f-3)
     before = fields_to_host(s)
     fb = solver === :ct ? (Array(s.ct.bxf), Array(s.ct.byf), Array(s.ct.bzf)) : nothing
     r = advance(s, integ; nsteps=1, dt=dt, ch=ch, checkpoint_fallback_on_rejection=true)
