@@ -1713,6 +1713,12 @@ local-drag predictor, so the free-streaming limit recovers
 `step_drag_godunov!`. The same response corrects the conservative trial state;
 gas internal and magnetic energies are retained while radiation removes or
 returns only the corresponding kinetic work.
+
+Positivity protection (trial check, restore, minmod-PLM/HLL retry, subdivision or
+checkpoint error) runs for the `:cube` integrator and for CT (`mhd_solver=:ct`) states
+on `:ref`; GLM on `:ref` has none. The wave-speed gate is
+`positivity_wave_growth_limit*ch`, so CT callers must pass a positive `ch` (the signal
+speed; CT dynamics do not use it).
 """
 function step_radiation_godunov!(s::MHDState{T},ws,dt::Real;
         drag_impulse::Real,closure::RadiationClosure,ch::Real,

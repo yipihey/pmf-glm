@@ -480,6 +480,7 @@ include("test_recombination_transport.jl")
 include("test_passive_transport.jl")
 include("test_terminal_handoff_overlap.jl")
 include("test_ct.jl")
+include("test_ct_fallback.jl")
 
 @testset "magnetic field-loop advection" begin
     N = 64

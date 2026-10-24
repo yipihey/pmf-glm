@@ -114,6 +114,30 @@ GLM cleaning speed. `divb_face_dx_over_brms` in `history.tsv` and
 `performance.tsv` is the exact face divergence (empty/`NaN` for GLM); the
 centred `divBdx_over_brms` is a different diagnostic and is not zero for CT.
 
+**Positivity protection of the radiation-coupled step.** GLM protects its `cube`
+radiation step: the trial state is checked (density at least `max(smallr, llf_dmin)`,
+finite state, internal energy at least `pfl/(gamma-1)`, trial wave speed at most
+`positivity_wave_growth_limit * ch`), a rejected trial restores the pre-step state and is
+retried as a complete minmod-PLM/HLL step, and a second rejection either raises
+`RADIATION_CHECKPOINT_CFL_FALLBACK` (checkpoint fallback) or halves the step recursively
+(`positivity_max_subdivisions`). CT has the same protection on `ref`
+({{< src "lib/MHDKernels/src/radiation_coupling.jl" "step_radiation_godunov!" >}}), with
+identical counters (`fallback_steps`, `plm_hll_fallback_steps`, `subdivision_steps`) and
+warnings. Differences from GLM: the face fields and their Kahan remainders are updated in
+place by `ct_update!`, so a snapshot of them (6 extra `N^3` arrays in the radiation
+workspace, `ct_snapshot`: 15% of the 39 state and CT arrays, plus one device copy per
+radiation step) is taken before the trial and restored
+exactly with the cell fields (GLM resets its remainders; CT does not lose them); the
+minmod-PLM/HLL retry passes its reconstruction and Riemann codes to the kernel without changing
+`s.recon`/`s.riemann`; and the internal-energy and finiteness checks run on the stored trial state
+(the `ref` kernel has no inadmissible-cell flag). The GLM `ref` path is deliberately
+unchanged and has no such protection (it is the CPU default, not the production GPU path).
+CT callers must pass a positive `ch` (the wave-speed gate is `growth * ch`; CT dynamics do not use it). Runner: CT passes `ch = smax`, so `MHD_RADIATION_POSITIVITY_WAVE_GROWTH_LIMIT` is multiplied
+by `MHD_GLM_CH_FAC` for CT to reproduce GLM's absolute wave-speed limit.
+Whether the PLM/HLL trial is rejected can differ between GLM and CT in low-beta
+gas, where the thermal energy is a small difference of large energies and the schemes
+treat `B` differently ([comparing CT and GLM runs](validation.qmd#sec-ct-vs-glm)).
+
 ## Magnetic-force decomposition {#sec-force-split}
 
 The centered Maxwell-stress diagnostic uses

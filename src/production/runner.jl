@@ -5164,6 +5164,14 @@ function main()
             "MHD Brms=$(brms) leaves insufficient Float16 staging headroom; " *
             "increase MHD_CHEM_VUNIT")
     end
+    # CT runs ch = smax (so dt is not GLM-limited), GLM runs ch = glm_ch_fac*smax. The radiation
+    # positivity wave-speed limit is `growth * ch`; for CT scale the growth by glm_ch_fac so the
+    # ABSOLUTE limit (growth * glm_ch_fac * smax) is the same one GLM applies.
+    radiation_positivity_wave_growth_eff = radiation_positivity_wave_growth_limit *
+        (use_ct ? glm_ch_fac : 1.0)
+    radiation_positivity_wave_growth_eff > 1 || error(
+        "MHD_RADIATION_POSITIVITY_WAVE_GROWTH_LIMIT * MHD_GLM_CH_FAC must exceed one " *
+        "for MHD_SOLVER=ct (got $(radiation_positivity_wave_growth_eff))")
     drag_dt_mode in (:godunov,:radiation) && mhd_integrator === :cube &&
         any(x -> !iszero(x), (drag_vx0, drag_vy0, drag_vz0)) &&
         error("Metal/CUDA source-aware Godunov drag is specialized for the CMB frame; set MHD_DRAG_VX0/VY0/VZ0=0")
@@ -6549,7 +6557,7 @@ function main()
                             positivity_max_fallback_passes=
                                 radiation_positivity_max_fallback_passes,
                             positivity_wave_growth_limit=
-                                radiation_positivity_wave_growth_limit,
+                                radiation_positivity_wave_growth_eff,
                             positivity_max_subdivisions=
                                 radiation_positivity_max_subdivisions,
                             checkpoint_fallback_on_rejection=
