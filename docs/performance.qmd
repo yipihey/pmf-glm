@@ -38,11 +38,9 @@ hardware, version, source hash, and scope with the throughput.
 
 `--mhd-solver=glm|ct|both` selects the solver (default `glm`, unchanged). CT
 always runs the `:ref` integrator, so `both` prints one table with GLM on its
-default integrator, GLM on `:ref` where that kernel compiles (the like-for-like
-integrator for CT), and CT, with the centred `divB dx/Brms` of every row and the
-exact face divergence for CT. GLM `:ref` does not compile on Metal (the kernel
-needs more than Metal's 31 kernel arguments; CT packs its arguments to fit) and is
-reported `NOT_RUN`, not omitted. Outputs default to `results/benchmark*.toml`,
+default integrator, GLM on `:ref` (the like-for-like integrator for CT), and CT, with the centred
+`divB dx/Brms` of every row and the exact face divergence for CT. A case that fails to compile or run is
+reported `NOT_RUN` with the reason, not omitted. Outputs default to `results/benchmark*.toml`,
 one file per row (`...-glm.toml`, `...-ct.toml`), and carry `mhd_solver`; none
 overwrites `docs/data/benchmark-*.toml`.
 
@@ -57,6 +55,13 @@ the GPU is shared, so repeat before quoting): GLM cube 112.1 and 111.1, CT ref
 cell, so this is a kernel-only number, not a production-step speed; the CT step is
 also not GLM-limited (its `dt` is the plain CFL step, see
 [Comparing CT and GLM runs](validation.qmd#sec-ct-vs-glm)).
+
+GLM `:ref` runs on Metal through the tuple-packed kernel. Same machine, N=96, 60
+iterations, Float32, 2026-10-24 (two `--mhd-solver=both` repeats, shared GPU): GLM
+cube 101.9 and 100.1, GLM ref 150.5 and 160.8, CT ref 113.2 and 135.3 MCell/s.
+In this kernel-only benchmark the cube is therefore not the fastest GLM kernel on
+this GPU; the production default is unchanged until a coupled-step comparison says
+otherwise.
 
 For physical trajectories the production runner must not advance uncounted
 warmup states at a frozen cosmological time. Keep `MHD_WARMUP=0`; use

@@ -59,12 +59,13 @@ end
 @inline _with_bn(q::NTuple{9,T},::Val{3},b::T) where {T} = (q[1],q[2],q[3],q[4],q[5],q[6],q[7],b,q[9])
 
 # The per-cell body is shared by two kernels generated below. `step_ref_kernel!` keeps
-# the historic argument list and serves GLM; the CT variant `step_ref_ct_kernel!` takes
-# the grid/BC integers and the 13 scalars as tuples and the 18 CT arrays as one packed
-# buffer: Metal passes each kernel argument as its own buffer and allows 31, and the
-# radiation-coupled CT kernel needed 33 with the integers alone packed. (Packing GLM's
-# arguments too perturbed one Float32 HLLD case by an ulp under @fastmath, so the GLM
-# kernel and its code are kept as they were.)
+# the historic argument list and serves GLM on the CPU; `step_ref_packed_kernel!` takes
+# the grid/BC integers and the 13 scalars as tuples (and, for CT, the 18 CT arrays as one
+# packed buffer): Metal passes each kernel argument as its own buffer and allows 31, the
+# historic GLM list needs 34 and the radiation-coupled CT kernel needed 33 with the
+# integers alone packed. GPU backends launch the packed kernel for both solvers. The CPU
+# keeps the historic GLM kernel because packing its arguments perturbed one Float32 HLLD
+# case by an ulp under @fastmath, so the CPU GLM kernel and its code are kept as they were.
 const _STEP_REF_BODY = quote
     @inbounds begin
         u = (a1,a2,a3,a4,a5,a6,a7,a8,a9)
@@ -170,7 +171,7 @@ end
     $_STEP_REF_BODY
 end
 
-@eval @kernel function step_ref_ct_kernel!(o1,o2,o3,o4,o5,o6,o7,o8,o9,
+@eval @kernel function step_ref_packed_kernel!(o1,o2,o3,o4,o5,o6,o7,o8,o9,
         @Const(a1),@Const(a2),@Const(a3),@Const(a4),@Const(a5),@Const(a6),@Const(a7),@Const(a8),a9,
         geom::NTuple{6,Int}, rec::Val, rsol::Val, sc::NTuple{13,T}, drag::Val{DRAG},
         rad::Val{RAD},track_density::Val{TRACK},
@@ -182,13 +183,17 @@ end
     $_STEP_REF_BODY
 end
 
-# Launch the reference kernel for state `s`: GLM with its historic argument list, CT
-# with the grid/BC integers and the 13 scalars packed (Metal: <= 31 kernel arguments).
+# Launch the reference kernel for state `s`: GLM on the CPU with its historic argument
+# list; CT, and GLM on a GPU, with the grid/BC integers and the 13 scalars packed
+# (Metal: <= 31 kernel arguments). For GLM the unused `ctp` is the density array.
 function _launch_step_ref!(s::MHDState{T}, outs, ins, geom::NTuple{6,Int}, rec, rsol,
                            sc8::NTuple{8,T}, drag, sc5::NTuple{5,T}, flags...) where {T}
     if uses_ct(s)
-        step_ref_ct_kernel!(s.be,256)(outs..., ins..., geom, rec, rsol, (sc8...,sc5...), drag,
+        step_ref_packed_kernel!(s.be,256)(outs..., ins..., geom, rec, rsol, (sc8...,sc5...), drag,
                                       flags..., Val(true), s.ct.packed; ndrange=ncells(s))
+    elseif !(s.be isa CPU)
+        step_ref_packed_kernel!(s.be,256)(outs..., ins..., geom, rec, rsol, (sc8...,sc5...), drag,
+                                      flags..., Val(false), s.U[1]; ndrange=ncells(s))
     else
         step_ref_kernel!(s.be,256)(outs..., ins..., geom..., rec, rsol, sc8..., drag, sc5...,
                                    flags..., Val(false), s.U[1]; ndrange=ncells(s))

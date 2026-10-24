@@ -102,7 +102,7 @@ else
         result = try
             measure(mhd_solver,integrator)
         catch err
-            # e.g. the GLM :ref kernels exceed Metal's 31 kernel-argument limit; say so, do not hide it.
+            # e.g. a kernel that does not compile on this backend; say so, do not hide it.
             reason = first(split(sprint(showerror,err),'\n'))
             println(stderr,"case ",label," NOT_RUN: ",reason)
             push!(skipped,(label,mhd_solver,integrator,reason))

@@ -81,6 +81,13 @@ function _test_smooth_mhd(name)
         @testset "$recon / $riemann" begin
             cpu = _state(:cpu, fields, n; recon, riemann)
             device = _state(name, fields, n; recon, riemann)
+            device_ref = _state(name, fields, n; recon, riemann)
+            device_ref_drag = _state(name, fields, n; recon, riemann)
+            cpu_drag = _state(:cpu, fields, n; recon, riemann)
+            device_ref_rad = _state(name, fields, n; recon, riemann)
+            cpu_rad = _state(:cpu, fields, n; recon, riemann)
+            device_corr = MHD.device_zeros(device_ref_rad.be, Float32, (9n^3,))
+            cpu_corr = zeros(Float32, 9n^3)
             dt, speed = MHD.compute_dt(cpu; cfl=0.08)
             for _ in 1:3
                 MHD.step!(cpu, dt; ch=speed, integrator=:ref)
@@ -89,11 +96,25 @@ function _test_smooth_mhd(name)
                 else
                     decay = exp(-MHD.GLM_CR * speed * dt / device.dx)
                     MHD.step_cube!(device, dt; ch=speed, decay, impl=:ka)
+                    # GLM :ref on a GPU runs the tuple-packed kernel (Metal: <= 31 arguments)
+                    MHD.step!(device_ref, dt; ch=speed, integrator=:ref)
+                    MHD.step_ref_drag!(device_ref_drag, dt; ch=speed, decay, drag_impulse=0.05)
+                    MHD.step_ref_drag!(cpu_drag, dt; ch=speed, decay, drag_impulse=0.05)
+                    MHD.step_ref_radiation!(device_ref_rad, dt; ch=speed, decay,
+                        drag_impulse=0.05f0, correction=device_corr)
+                    MHD.step_ref_radiation!(cpu_rad, dt; ch=speed, decay,
+                        drag_impulse=0.05f0, correction=cpu_corr)
                 end
             end
             host_cpu = MHD.fields_to_host(cpu)
             host_device = MHD.fields_to_host(device)
             _assert_fields(host_cpu, host_device)
+            if name !== :cpu
+                _assert_fields(host_cpu, MHD.fields_to_host(device_ref))
+                _assert_fields(MHD.fields_to_host(cpu_drag), MHD.fields_to_host(device_ref_drag))
+                _assert_fields(MHD.fields_to_host(cpu_rad), MHD.fields_to_host(device_ref_rad))
+                @test abs(_mass(MHD.fields_to_host(device_ref)) / initial_mass - 1) < 3e-6
+            end
             @test abs(_mass(host_device) / initial_mass - 1) < 3e-6
             @test maximum(abs, host_device[2] .- fields[2]) > 1f-7
         end
