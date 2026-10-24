@@ -4,8 +4,10 @@ using TOML
 
 const CT_SMOKE = TOML.parsefile(joinpath(@__DIR__, "..", "examples", "cosmology-smoke.toml"))
 
-function ct_smoke_config(solver; zend=3199.9, resume=false, final_checkpoint=true, max_cycles=32)
+function ct_smoke_config(solver; zend=3199.9, resume=false, final_checkpoint=true, max_cycles=32,
+                         compensate=false)
     settings = deepcopy(CT_SMOKE)
+    compensate && (settings["environment"] = Dict("MHD_RADIATION_MAGNETIC_COMPENSATION" => "1"))
     settings["run"]["max_cycles"] = max_cycles
     settings["run"]["mhd_solver"] = solver
     settings["run"]["checkpoint_final"] = final_checkpoint
@@ -62,6 +64,24 @@ mktempdir() do root
         key in ("delta_b_rms", "delta_dm_rms", "delta2k_amp") && continue
         @test a[key] == b[key]
     end
+
+    # Compensated CT faces (MHD_RADIATION_MAGNETIC_COMPENSATION=1): the face remainders are
+    # checkpointed (ct_residual_*), so stop/resume reproduces the uninterrupted run bitwise.
+    cfull = quiet(() -> run_simulation(ct_smoke_config("ct"; compensate=true, final_checkpoint=false);
+                                       output_dir=out("ctc-full")))
+    @test cfull.status == "COMPLETED"
+    chalf = quiet(() -> run_simulation(ct_smoke_config("ct"; compensate=true, max_cycles=4);
+                                       output_dir=out("ctc-half")))
+    @test chalf.status == "STOPPED_AT_LIMIT"
+    cresumed = quiet(() -> run_simulation(ct_smoke_config("ct"; compensate=true, resume=true);
+                                          output_dir=out("ctc-half")))
+    @test cresumed.status == "COMPLETED"
+    a = ct_last_row(out("ctc-full")); b = ct_last_row(out("ctc-half"))
+    for key in keys(a)
+        key in ("delta_b_rms", "delta_dm_rms", "delta2k_amp") && continue
+        @test a[key] == b[key]
+    end
+    @test parse(Float64, a["divb_face_dx_over_brms"]) < 1e-5
 
     # GLM: metadata and an empty face-divergence column; GLM and CT checkpoints do not mix.
     glm = quiet(() -> run_simulation(ct_smoke_config("glm"; max_cycles=4); output_dir=out("glm-half")))

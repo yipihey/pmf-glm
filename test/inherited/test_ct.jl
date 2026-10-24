@@ -182,7 +182,7 @@ end
     c = allocate_state(backend(:cpu), Float64, (8,8,8); dx=1/8, mhd_solver=:ct)
     @test mhd_solver(g) === :glm && !uses_ct(g) && g.ct === nothing
     @test mhd_solver(c) === :ct && uses_ct(c) && c.ct isa CTState
-    @test length(fieldnames(CTState)) == 19 && length(c.ct.packed) == 18*length(c.U[1])
+    @test length(fieldnames(CTState)) == 22 && length(c.ct.packed) == 21*length(c.U[1])
     @test_throws ErrorException allocate_state(backend(:cpu), Float64, (8,8,8); dx=1/8, mhd_solver=:bogus)
     @test_throws ErrorException allocate_state(backend(:cpu), Float64, (8,8,8); dx=1/8,
                                                mhd_solver=:ct, bcs=(:outflow,:periodic,:periodic))
@@ -472,6 +472,96 @@ end
                                                         ch=0f0, integrator=:cube, photon_state=photons)
     # cell-centred terminal induction would overwrite B: refused
     @test_throws ErrorException terminal_ct_induction!(sr, 1f-4; gamma_drag=10, pressure_coeff=1)
+end
+
+# ── Compensated (Kahan) CT face updates under a strong guide field ───────────────────
+# Float32 faces of ~35 have ulp 3.8e-6; with a small oblique perturbation the per-step
+# face increments dtdx*curl(E) are comparable to half an ulp and plain summation drops them
+# face by face. The dropped parts differ from face to face, so the face divergence random-walks
+# away from round-off and the perturbation drifts from the Float64 solution. The compensated
+# update (radiation-coupled steps with track_magnetic, like GLM's cell-B remainders) carries
+# them. All Float32 runs below use the same `step_ref_radiation!` kernel (zero drag, zero
+# correction); only `track_magnetic` differs.
+function ct_guide_problem(N; P0=1000f0, B0=(35f0, 22f0, 28f0), amp=2f-4, vamp=1f-4)
+    T = Float32; nc = N^3
+    Ax = zeros(T, nc); Ay = zeros(T, nc); Az = zeros(T, nc)
+    hyd = ntuple(_ -> zeros(T, nc), 5)
+    modes = ((1,2,-1,0.3), (2,-1,1,1.1), (-1,1,2,2.0), (3,1,-2,0.7), (1,-3,2,1.9))   # oblique
+    for k in 1:N, j in 1:N, i in 1:N
+        c = linidx(N, N, i, j, k); x = (i-1)/N; y = (j-1)/N; z = (k-1)/N
+        rho = 1f0; vx = 0f0; vy = 0f0; vz = 0f0
+        for (m, (a, b, cc, ph)) in enumerate(modes)
+            arg = 2π*(a*x + b*y + cc*z) + ph
+            Ax[c] += T(amp*sin(arg+m)/(2π*(abs(b)+abs(cc))))
+            Ay[c] += T(amp*cos(arg)/(2π*(abs(a)+abs(cc))))
+            Az[c] += T(amp*sin(arg+2m)/(2π*(abs(a)+abs(b))))
+            vx += T(vamp*sin(arg+0.5m)); vy += T(vamp*cos(arg+m)); vz += T(vamp*sin(arg+1.5m))
+            rho += T(1e-3*cos(arg+2m))
+        end
+        hyd[1][c] = rho; hyd[2][c] = rho*vx; hyd[3][c] = rho*vy; hyd[4][c] = rho*vz
+        hyd[5][c] = T(P0/(5/3-1)) + 0.5f0*rho*(vx^2+vy^2+vz^2)
+    end
+    g = allocate_state(backend(:cpu), T, (N,N,N); dx=1/N, mhd_solver=:ct)
+    ct_faces_from_potential!(g, Ax, Ay, Az)
+    faces = (Array(g.ct.bxf) .+ B0[1], Array(g.ct.byf) .+ B0[2], Array(g.ct.bzf) .+ B0[3])
+    faces, hyd
+end
+
+function ct_guide_state(T, N, faces, hyd)
+    s = allocate_state(backend(:cpu), T, (N,N,N); dx=1/N, gamma=5/3, riemann=:hlld, mhd_solver=:ct)
+    for t in 1:5; copyto!(s.U[t], T.(hyd[t])); end
+    for t in 6:8; fill!(s.U[t], 0); end
+    MHDKernels._ct_install_faces!(s, T.(faces[1]), T.(faces[2]), T.(faces[3]))
+    s
+end
+
+@testset "compensated CT face updates (strong guide field, Float32)" begin
+    N = 16; nsteps = 2000
+    faces, hyd = ct_guide_problem(N)
+    sp = ct_guide_state(Float32, N, faces, hyd)    # plain step!  (uncompensated)
+    sn = ct_guide_state(Float32, N, faces, hyd)    # radiation kernel, track_magnetic=false
+    sc = ct_guide_state(Float32, N, faces, hyd)    # radiation kernel, track_magnetic=true
+    s64 = ct_guide_state(Float64, N, faces, hyd)
+    dt, _ = compute_dt(sp; cfl=0.3); dt = Float32(dt)
+    corr = zeros(Float32, 9N^3)
+    brms64(s) = (h = fields_to_host(s); sqrt(sum(sum(abs2, Float64.(h[v])) for v in 6:8)/length(h[1])))
+    divn(s) = max_divb_face(s)*Float64(s.dx)/brms64(s)
+    b0 = ntuple(d -> Float64.(fields_to_host(s64)[5+d]), 3)
+    # perturbation amplitude (max |B - B(0)|), error of a Float32 state against `ref`
+    pert(ref) = maximum(maximum(abs.(Float64.(fields_to_host(ref)[5+d]) .- b0[d])) for d in 1:3)
+    err(s, ref) = maximum(maximum(abs.(Float64.(fields_to_host(s)[5+d]) .- Float64.(fields_to_host(ref)[5+d]))) for d in 1:3)
+    div0 = divn(sp)
+    for n in 1:nsteps
+        step!(sp, dt)
+        MHDKernels.step_ref_radiation!(sn, dt; ch=0f0, decay=1f0, drag_impulse=0f0, correction=corr,
+                            track_density=false, track_magnetic=false, track_energy=false)
+        MHDKernels.step_ref_radiation!(sc, dt; ch=0f0, decay=1f0, drag_impulse=0f0, correction=corr,
+                            track_density=false, track_magnetic=true, track_energy=false)
+        step!(s64, Float64(dt))
+    end
+    P = pert(s64)
+    dp, dn, dc = divn(sp), divn(sn), divn(sc)
+    ep, en, ec = err(sp, s64)/P, err(sn, s64)/P, err(sc, s64)/P
+    @printf("  guide-field CT (N=%d, %d steps, dt=%.3e, Brms=%.2f, perturbation %.2e = %.0f ulp):\n", N, nsteps, dt, brms64(s64), P, P/3.8e-6)
+    @printf("    div_face*dx/Brms: init %.2e | plain %.2e | rad uncompensated %.2e | rad compensated %.2e\n", div0, dp, dn, dc)
+    @printf("    max|B-B64|/max|B64-B(0)|: plain %.3e | rad uncompensated %.3e | rad compensated %.3e\n", ep, en, ec)
+    @printf("    max face remainder %.2e (ulp(35)/2 = 1.9e-6)\n", maximum(abs, sc.ct.rbx))
+    @test div0 < 3e-7
+    @test dp > 10*div0 && dn > 10*div0          # uncompensated: grows far above round-off
+    @test dc < 3*div0                           # compensated: stays at round-off
+    @test en > 3*ec && ep > 3*ec                # uncompensated drifts from Float64, compensated does not
+    @test ec < 0.05
+    @test maximum(abs, sc.ct.rbx) <= 2.1e-6     # remainders bounded by half an ulp of the faces
+    @test all(iszero, sn.ct.rbx) && all(iszero, sp.ct.rby)     # uncompensated steps never touch them
+    # cell-centred B stays the plain average of the stored faces
+    h = fields_to_host(sc)
+    bxf = reshape(copy(sc.ct.bxf), N, N, N)
+    @test vec(0.5f0 .* (bxf .+ circshift(bxf, (-1,0,0)))) == h[6]
+    # reset semantics (what _radiation_reset_magnetic_residual! does for CT states)
+    @test any(!iszero, sc.ct.rbx)
+    ws = MHDKernels.allocate_radiation_workspace(sc)
+    MHDKernels._radiation_reset_magnetic_residual!(ws, sc)
+    @test all(iszero, sc.ct.rbx) && all(iszero, sc.ct.rby) && all(iszero, sc.ct.rbz)
 end
 
 end # constrained transport

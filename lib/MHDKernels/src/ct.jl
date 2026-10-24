@@ -26,7 +26,7 @@
 # includes the same drag/radiation source modifications the face states receive
 # (`_facep_sources`); generic (Nx,Ny,Nz) grids; pmf-glm's pressure/density floors.
 #
-# MEMORY. 3 face arrays + 15 workspace arrays (6 face-flux arrays, 3 mass-flux arrays,
+# MEMORY. 3 face arrays + 3 face-remainder arrays + 15 workspace arrays (6 face-flux arrays, 3 mass-flux arrays,
 # 3 cell EMFs, 3 edge EMFs) of N^3 on top of GLM's 18 (9 state + 9 scratch). The ψ slot
 # stays allocated but is identically zero.
 #
@@ -106,6 +106,28 @@ end
     end
 end
 
+# The same curl update with Kahan (compensated) summation of every face, mirroring GLM's
+# `_compensated_update!` for cell B: the part of each increment that the Float32 sum
+# `b + inc` cannot represent is carried in a per-face remainder (`rbx/rby/rbz`) and added
+# to the next increment instead of being lost. With a strong guide field the per-step
+# increments `dtdx*curl(E)` of a weak perturbation are comparable to half an ulp of `b`,
+# and plain summation drops them face by face; since the dropped parts differ from face to
+# face the stored faces' divergence then random-walks away from round-off. Here the exact
+# sum `stored + remainder` follows the curl update, so the divergence of the stored faces
+# stays bounded by the remainders (at most half an ulp of `b` each).
+@kernel function _ct_faceB_comp_k!(bxf,byf,bzf,rbx,rby,rbz,@Const(ex),@Const(ey),@Const(ez),
+        Nx::Int,Ny::Int,Nz::Int,dtdx::T) where {T}
+    c=@index(Global,Linear)
+    @inbounds begin
+        i=(c-1)%Nx+1; j=((c-1)÷Nx)%Ny+1; k=(c-1)÷(Nx*Ny)+1
+        L(a,b,d)=_periodic_corr_index(Nx,Ny,Nz,a,b,d)
+        ip=L(i+1,j,k); jp=L(i,j+1,k); kp=L(i,j,k+1)
+        bxf[c]=_compensated_update!(rbx,c,bxf[c],-(dtdx*((ez[jp]-ez[c])-(ey[kp]-ey[c]))),Val(true))
+        byf[c]=_compensated_update!(rby,c,byf[c],-(dtdx*((ex[kp]-ex[c])-(ez[ip]-ez[c]))),Val(true))
+        bzf[c]=_compensated_update!(rbz,c,bzf[c],-(dtdx*((ey[ip]-ey[c])-(ex[jp]-ex[c]))),Val(true))
+    end
+end
+
 # Cell-centred B = average of the two faces.
 @kernel function _ct_bcc_k!(o6,o7,o8,@Const(bxf),@Const(byf),@Const(bzf),
         Nx::Int,Ny::Int,Nz::Int)
@@ -121,20 +143,30 @@ end
 end
 
 """
-    ct_update!(s, dtdx)
+    ct_update!(s, dtdx; compensate=false)
 
 Second half of a CT step, run after the Godunov kernel and the `U`/`scratch` swap: edge
 EMFs (Gardiner & Stone 2005 CT-contact) from the workspace fluxes, face update by the
 discrete curl, and cell-centred B (`s.U[6:8]`) as the face average. `s.scratch` keeps the
 full old state.
+
+`compensate=true` sums every face update with Kahan compensation, carrying the remainders
+in `s.ct.rbx/rby/rbz` (see `_ct_faceB_comp_k!`); the cell-centred B is still the plain
+average of the stored faces. The radiation-coupled steps request it exactly when GLM
+compensates cell B (`track_magnetic`).
 """
-function ct_update!(s::MHDState{T}, dtdx::Real) where {T}
+function ct_update!(s::MHDState{T}, dtdx::Real; compensate::Bool=false) where {T}
     ct=s.ct; ct === nothing && error("ct_update! needs a CT state")
     Nx,Ny,Nz=s.dims; nc=ncells(s)
     _ct_emf_k!(s.be,256)(ct.ex,ct.ey,ct.ez,ct.mfx,ct.mfy,ct.mfz,ct.fxby,ct.fxbz,
         ct.fybx,ct.fybz,ct.fzbx,ct.fzby,ct.ecx,ct.ecy,ct.ecz,Nx,Ny,Nz;ndrange=nc)
-    _ct_faceB_k!(s.be,256)(ct.bxf,ct.byf,ct.bzf,ct.ex,ct.ey,ct.ez,Nx,Ny,Nz,T(dtdx);
-                           ndrange=nc)
+    if compensate
+        _ct_faceB_comp_k!(s.be,256)(ct.bxf,ct.byf,ct.bzf,ct.rbx,ct.rby,ct.rbz,
+                                    ct.ex,ct.ey,ct.ez,Nx,Ny,Nz,T(dtdx);ndrange=nc)
+    else
+        _ct_faceB_k!(s.be,256)(ct.bxf,ct.byf,ct.bzf,ct.ex,ct.ey,ct.ez,Nx,Ny,Nz,T(dtdx);
+                               ndrange=nc)
+    end
     _ct_bcc_k!(s.be,256)(s.U[6],s.U[7],s.U[8],ct.bxf,ct.byf,ct.bzf,Nx,Ny,Nz;ndrange=nc)
     KA.synchronize(s.be)
     s
@@ -186,8 +218,16 @@ end
     end
 end
 
+"Zero the CT face remainders (no-op for GLM states)."
+function _ct_reset_face_residual!(s::MHDState)
+    ct=s.ct
+    ct === nothing || foreach(r -> fill!(r,zero(eltype(r))),(ct.rbx,ct.rby,ct.rbz))
+    nothing
+end
+
 function _ct_install_faces!(s::MHDState{T}, bxf, byf, bzf) where {T}
     ct=s.ct; Nx,Ny,Nz=s.dims
+    _ct_reset_face_residual!(s)
     copyto!(ct.bxf,bxf); copyto!(ct.byf,byf); copyto!(ct.bzf,bzf)
     _ct_cell_from_faces_k!(s.be,256)(s.U[5],s.U[6],s.U[7],s.U[8],s.U[9],
         ct.bxf,ct.byf,ct.bzf,Nx,Ny,Nz;ndrange=ncells(s))

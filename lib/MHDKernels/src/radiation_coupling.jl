@@ -225,6 +225,14 @@ function _radiation_reset_magnetic_residual!(ws::RadiationWorkspace)
     nothing
 end
 
+# Also reset the CT face remainders of a CT state (they are the CT analogue of
+# `ws.magnetic_residual`).
+function _radiation_reset_magnetic_residual!(ws::RadiationWorkspace,s::MHDState)
+    _radiation_reset_magnetic_residual!(ws)
+    _ct_reset_face_residual!(s)
+    nothing
+end
+
 function _radiation_trial_admissible(s::MHDState)
     rho_min=Float64(minimum(s.U[1]))
     isfinite(rho_min) && rho_min>=max(Float64(s.smallr),Float64(s.llf_dmin))
@@ -237,7 +245,7 @@ function _restore_radiation_trial!(s::MHDState,ws::RadiationWorkspace,
     # A rejected trial has already replaced the in-place Kahan remainders.
     # Resetting loses at most one Float32 rounding remainder while preserving
     # the accepted conservative state; fallback steps are exceptional.
-    _radiation_reset_magnetic_residual!(ws)
+    _radiation_reset_magnetic_residual!(ws,s)
     if track_density
         _radiation_initialize_density_k!(s.be)(ws.density_perturbation,s.U[1],
             ws.rho_mean;ndrange=ncells(s))

@@ -242,6 +242,7 @@ function step_ref_radiation!(s::MHDState{T},dt::Real;ch::Real,decay::Real,
         Val(track_magnetic),Val(track_energy))
     KA.synchronize(s.be)
     s.U,s.scratch=s.scratch,s.U
-    uses_ct(s) && ct_update!(s,dtdx)
+    # Compensate the CT faces exactly when GLM would compensate cell B.
+    uses_ct(s) && ct_update!(s,dtdx;compensate=track_magnetic)
     s
 end

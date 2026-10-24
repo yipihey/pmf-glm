@@ -29,8 +29,13 @@ length-`ncells` device vectors indexed like the cell fields, cell `c=(i,j,k)`:
   * `ex, ey, ez` — edge EMFs: `ez[c]` at `(i-1/2,j-1/2,k)`, `ex[c]` at
     `(i,j-1/2,k-1/2)`, `ey[c]` at `(i-1/2,j,k-1/2)`.
 
-All 18 are contiguous views, in this order, of ONE device buffer `packed` of length
-`18*ncells`: the fused Godunov kernel takes that single buffer (slot `q` of cell `c` at
+  * `rbx, rby, rbz` — Kahan remainders of the face updates (slots 19-21). They are used
+    only when `ct_update!` is asked to compensate (the radiation-coupled steps with
+    `MHD_RADIATION_MAGNETIC_COMPENSATION`, like GLM's cell-B remainders) and stay zero
+    otherwise.
+
+All 21 are contiguous views, in this order, of ONE device buffer `packed` of length
+`21*ncells`: the fused Godunov kernel takes that single buffer (slot `q` of cell `c` at
 `(q-1)*ncells + c`), because Metal allows a kernel 31 buffer arguments and counts every
 scalar argument as one: with 18 separate CT arrays it failed with 38/31.
 
@@ -43,16 +48,17 @@ struct CTState{A,V}
     fxby::V; fxbz::V; fybx::V; fybz::V; fzbx::V; fzby::V
     ecx::V; ecy::V; ecz::V
     ex::V; ey::V; ez::V
+    rbx::V; rby::V; rbz::V
 end
 
 function CTState(packed::AbstractVector, nc::Int)
-    length(packed) == 18nc || error("CT packed buffer has $(length(packed)) entries, expected $(18nc)")
-    v = ntuple(q -> view(packed, (q-1)*nc+1:q*nc), 18)
+    length(packed) == 21nc || error("CT packed buffer has $(length(packed)) entries, expected $(21nc)")
+    v = ntuple(q -> view(packed, (q-1)*nc+1:q*nc), 21)
     CTState{typeof(packed),eltype(v)}(packed, v...)
 end
 
-"`ct_arrays(ct)` — the 18 CT field views as a tuple, in field order."
-ct_arrays(c::CTState) = ntuple(i -> getfield(c, i + 1), 18)
+"`ct_arrays(ct)` — the 21 CT field views (18 fields + 3 face remainders) as a tuple, in field order."
+ct_arrays(c::CTState) = ntuple(i -> getfield(c, i + 1), 21)
 
 mutable struct MHDState{T,A,B}
     U::NTuple{NVAR,A}        # conserved
@@ -112,7 +118,7 @@ overrides per-axis (e.g. `bcs=(:outflow,:periodic,:periodic)` for a 1-D shock tu
 
 `mhd_solver` selects the divergence treatment: `:glm` (default; Dedner cleaning with
 the ψ field) or `:ct` (face-staggered constrained transport, see `ct.jl`; allocates
-3 face + 15 workspace arrays and requires all-periodic BCs and the `:ref` integrator).
+3 face + 15 workspace + 3 face-remainder arrays and requires all-periodic BCs and the `:ref` integrator).
 """
 function allocate_state(be, ::Type{T}, dims::NTuple{3,Int};
                         dx::Real, gamma::Real = 5//3,
@@ -129,7 +135,7 @@ function allocate_state(be, ::Type{T}, dims::NTuple{3,Int};
     U  = ntuple(_ -> device_zeros(be, T, (nc,)), NVAR)
     sc = ntuple(_ -> device_zeros(be, T, (nc,)), NVAR)
     rsym = riemann === nothing ? (use_hlld ? :hlld : :llf) : Symbol(riemann)
-    ct = mhd_solver === :ct ? CTState(device_zeros(be, T, (18nc,)), nc) : nothing
+    ct = mhd_solver === :ct ? CTState(device_zeros(be, T, (21nc,)), nc) : nothing
     MHDState{T,eltype(U),typeof(be)}(U, sc, dims, T(dx), T(gamma), T(smallr), T(pfl),
                                      T(llf_dmin), T(llf_pmin), use_hlld, rsym, bcs, recon, be, ct)
 end

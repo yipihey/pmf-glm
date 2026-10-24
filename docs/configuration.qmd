@@ -80,7 +80,8 @@ before any state is allocated (both in the TOML validation and again in the driv
 | `physics.glm_project_every` | Default `0` (GLM radiation runs default to projecting every cycle); a value above zero is an error |
 | `physics.glm_ch_factor`, `MHD_GLM_CR` | Unused. The explicit step is not limited by the GLM speed `ch`; `dt` is the plain CFL step |
 | `backend` | CPU and Metal; CUDA is not run |
-| Checkpoints | A checkpoint without an `mhd_solver` key is a GLM checkpoint. GLM and CT checkpoints cannot be resumed as one another; CT checkpoints store the face fields |
+| `MHD_RADIATION_MAGNETIC_COMPENSATION` | `1` also makes the radiation-coupled steps sum the CT face updates with Kahan compensation (GLM: cell `B`); the face remainders are checkpointed as `ct_residual_1..3`. Use it for strong-guide-field, Float32 cases (the native-mode case sets it) |
+| Checkpoints | A checkpoint without an `mhd_solver` key is a GLM checkpoint. GLM and CT checkpoints cannot be resumed as one another; CT checkpoints store the face fields (and, with compensation, the face remainders) |
 
 Consequently a CT and a GLM run at equal `cfl` do not take identical steps
 whenever the CFL step, rather than a cosmological or source cap, is the limit.

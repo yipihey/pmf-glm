@@ -62,6 +62,25 @@ magnetic component at each face overwritten by the staggered face value and
 4. The cell-centred `B` used by every other module (energy, forces, chemistry,
    radiation, diagnostics) is the average of the two faces.
 
+**Compensated face updates.** With a strong Float32 guide field the per-step
+face increments `dtdx curl(E)` of a weak perturbation are comparable to half an
+ulp of the face value, and plain summation drops them face by face; because the
+dropped parts differ from face to face, the exact face divergence then
+random-walks away from round-off and the perturbation drifts from the Float64
+solution (the `test_ct.jl` guide-field case: components 22 to 35, 198 ulp
+perturbation, 2000 steps, `div_face*dx/Brms` 1.15e-7 initially, 7.5e-6 plain,
+1.5e-7 compensated). When `MHD_RADIATION_MAGNETIC_COMPENSATION=1` the
+radiation-coupled steps (exactly where GLM compensates its cell `B`) therefore
+sum each face with Kahan compensation: the part of an increment that `b + inc`
+cannot represent is kept in a per-face remainder (`rbx, rby, rbz`, three more
+slots of the CT buffer, checkpointed as `ct_residual_1..3`) and added to the
+next increment. The exact sum `stored + remainder` follows the curl update, so
+the divergence of the stored faces stays bounded by the remainders (at most half
+an ulp of each face) instead of growing. The cell-centred `B` remains the plain
+average of the stored faces, and plain `step!` and drag-only steps stay
+uncompensated, as for GLM.
+{{< src "lib/MHDKernels/src/ct.jl" "_ct_faceB_comp_k!" >}}
+
 The scheme is a port of `ct_mhd.jl` from the Solaceonx/GLMMHDTurb sweep-fixes
 (commits `9d20e52` and `7256715`).
 {{< src "lib/MHDKernels/src/ct.jl" "_ct_gs05" >}}
@@ -82,11 +101,11 @@ normalization values remain those of the generated field.
 `cube` integrators, terminal and hybrid drag, and the GLM projection are
 rejected. Metal allows 31 buffer arguments per kernel and counts each scalar
 argument as one, so the CT kernel (`step_ref_ct_kernel!`, generated from the same
-body as the GLM `step_ref_kernel!`) takes the 18 CT arrays as one packed buffer
+body as the GLM `step_ref_kernel!`) takes the CT arrays as one packed buffer
 and the grid/BC integers as one tuple; it runs on Metal. (GLM's `ref` kernel
 still exceeds the limit on Metal, as before CT; GLM runs there use `cube`.)
-CUDA is `NOT_RUN`. CT allocates 18 extra `N^3` arrays (three face fields and 15
-flux/EMF workspace arrays, in one buffer) on top of GLM's 18. From a state at
+CUDA is `NOT_RUN`. CT allocates 21 extra `N^3` arrays (three face fields, 15
+flux/EMF workspace arrays and three face remainders, in one buffer) on top of GLM's 18. From a state at
 rest the face mass fluxes are rounding noise and the upwind choice of the edge
 EMF follows their sign, so CT trajectories on different devices separate at
 first faster than with a definite flow (Metal vs CPU Float32, 32^3 PMF field,

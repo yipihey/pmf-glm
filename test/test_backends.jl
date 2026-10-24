@@ -362,6 +362,23 @@ function _test_ct_mhd(name)
             brms = sqrt(sum(v -> sum(abs2, host_device[v]), 6:8) / n^3)
             @test MHD.max_divb_face(device) * Float64(device.dx) / brms < 1e-5
             @test abs(_mass(host_device) / initial_mass - 1) < 3e-6
+            # compensated face updates (radiation-coupled steps with track_magnetic) run on the
+            # device and agree with the CPU, remainders included
+            comp = map((cpu, device)) do s
+                c = MHD.device_zeros(s.be, Float32, (9n^3,))
+                for _ in 1:3
+                    MHD.step_ref_radiation!(s, dt; ch=0f0, decay=1f0, drag_impulse=0.2f0,
+                        correction=c, track_density=false, track_magnetic=true,
+                        track_energy=false)
+                end
+                s
+            end
+            @test any(!iszero, MHD.to_host(comp[2].ct.rbx))
+            for f in (:bxf, :byf, :bzf, :rbx, :rby, :rbz)
+                a = MHD.to_host(getfield(cpu.ct, f)); b = MHD.to_host(getfield(device.ct, f))
+                @test maximum(abs, b .- a) <= 2f-6 + 5f-5 * maximum(abs, a)
+            end
+            @test MHD.max_divb_face(device) * Float64(device.dx) / brms < 1e-5
         end
     end
 end

@@ -5663,6 +5663,14 @@ function main()
             push!(arrays, "ct_bxf" => s.ct.bxf)
             push!(arrays, "ct_byf" => s.ct.byf)
             push!(arrays, "ct_bzf" => s.ct.bzf)
+            # Kahan remainders of the compensated face updates: active exactly when the
+            # radiation workspace compensates (GLM's magnetic_residual_$d analogue).
+            if radiation_workspace !== nothing &&
+               radiation_workspace.magnetic_residual !== nothing
+                push!(arrays, "ct_residual_1" => s.ct.rbx)
+                push!(arrays, "ct_residual_2" => s.ct.rby)
+                push!(arrays, "ct_residual_3" => s.ct.rbz)
+            end
         end
         return arrays
     end
@@ -5689,7 +5697,9 @@ function main()
                 optional_missing_arrays=("magnetic_residual_1",
                                          "magnetic_residual_2",
                                          "magnetic_residual_3",
-                                         "energy_residual"))
+                                         "energy_residual",
+                                         "ct_residual_1", "ct_residual_2",
+                                         "ct_residual_3"))
             restart_cycle = runtime.cycle
             measured = runtime.measured
             measured_subcycles = runtime.measured_subcycles
