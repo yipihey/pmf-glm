@@ -131,6 +131,20 @@ end
     end
 end
 
+# Edge-centred A_z = amplitude*max(radius - r, 0) at (i-1/2, j-1/2) (CT initialization).
+@kernel function _field_loop_Az_edge_k!(A, Nx::Int, Ny::Int, dx, radius, amplitude)
+    c = @index(Global, Linear)
+    @inbounds begin
+        T = eltype(A)
+        i = (c-1) % Nx + 1
+        j = ((c-1) ÷ Nx) % Ny + 1
+        x = T(i-1) * dx - T(0.5) * T(Nx) * dx
+        y = T(j-1) * dx - T(0.5) * T(Ny) * dx
+        r = sqrt(x*x + y*y)
+        A[c] = amplitude * max(radius - r, zero(T))
+    end
+end
+
 """
     init_field_loop!(s; radius=0.3, amplitude=1e-3, rho0=1, p0=1,
                      velocity=(1, 1, 0))
@@ -138,6 +152,10 @@ end
 Initialize the periodic Gardiner-Stone magnetic-field-loop advection problem.
 The in-plane field is formed as a discrete centered curl of `A_z`, making its
 initial centered divergence zero to roundoff.
+
+For a constrained-transport state (`mhd_solver=:ct`) `A_z` is evaluated at the grid
+edges and the FACE field is its discrete curl (exactly divergence-free); cell B is the
+face average and the energy is adjusted to keep the pressure `p0`.
 """
 function init_field_loop!(s::MHDState{T}; radius::Real=0.3, amplitude::Real=1e-3,
                           rho0::Real=1, p0::Real=1,
@@ -150,5 +168,13 @@ function init_field_loop!(s::MHDState{T}; radius::Real=0.3, amplitude::Real=1e-3
                                   T(rho0), T(p0), T(vx0), T(vy0), T(vz0);
                                   ndrange=ncells(s))
     KA.synchronize(s.be)
+    if uses_ct(s)
+        Az = device_zeros(s.be, T, (ncells(s),))
+        _field_loop_Az_edge_k!(s.be,256)(Az, Nx, Ny, s.dx, T(radius), T(amplitude);
+                                         ndrange=ncells(s))
+        KA.synchronize(s.be)
+        zero_A = device_zeros(s.be, T, (ncells(s),))
+        ct_faces_from_potential!(s, zero_A, zero_A, Az)
+    end
     return s
 end

@@ -226,6 +226,7 @@ function radiation_terminal_ct_induction!(s::MHDState{T}, ws::RadiationWorkspace
         cfl::Real=0.4, dissipation::Real=0.05,
         dissipation_order::Int=4, max_subcycles::Int=256,
         compensation=nothing, diagnostics::Bool=false) where {T}
+    _require_glm(s, "radiation_terminal_ct_induction! (cell-centred terminal induction)")
     dt > 0 || error("radiation terminal CT dt must be positive")
     0 < cfl <= 1 || error("radiation terminal CT cfl must be in (0,1]")
     0 <= dissipation <= 1 || error("radiation terminal CT dissipation must be in [0,1]")

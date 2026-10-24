@@ -433,6 +433,7 @@ launch backend: `:ka` = the portable KernelAbstractions kernel (CUDA + Metal); `
 NVIDIA peak — `:auto` uses raw on a CUDA-f32 state and falls back to KA otherwise.
 """
 function step_cube!(s::MHDState{T}, dt::Real; ch::Real, decay::Real, impl::Symbol = :auto) where {T}
+    _require_ct_integrator(s, "step_cube!")
     N = s.dims[1]
     all(==(N), s.dims) || error("step_cube! currently needs a cubic grid; got $(s.dims)")
     N % CTB == 0 || error("step_cube! needs N % $CTB == 0; got N=$N")
@@ -456,6 +457,7 @@ end
 
 function step_cube_drag!(s::MHDState{T},dt::Real; ch::Real,decay::Real,
                          drag_impulse::Real,target_velocity=(0,0,0)) where {T}
+    _require_ct_integrator(s, "step_cube_drag!")
     N=s.dims[1]
     all(==(N),s.dims) || error("step_cube_drag! currently needs a cubic grid; got $(s.dims)")
     N % CTB == 0 || error("step_cube_drag! needs N % $CTB == 0; got N=$N")
@@ -485,6 +487,7 @@ function step_cube_radiation!(s::MHDState{T},dt::Real;ch::Real,decay::Real,
         track_magnetic::Bool=true,track_energy::Bool=true,
         check_admissibility::Bool=false,fallback::Bool=false,
         global_fallback::Bool=false,robust_fallback::Bool=false) where {T}
+    _require_ct_integrator(s, "step_cube_radiation!")
     N=s.dims[1]
     all(==(N),s.dims) || error("step_cube_radiation! requires a cubic grid")
     N%CTB==0 || error("step_cube_radiation! needs N % $CTB == 0")

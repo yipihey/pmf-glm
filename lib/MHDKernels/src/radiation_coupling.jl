@@ -232,6 +232,7 @@ end
 
 function _restore_radiation_trial!(s::MHDState,ws::RadiationWorkspace,
                                    track_density::Bool)
+    _require_glm(s, "_restore_radiation_trial! (cube positivity fallback)")
     s.U,s.scratch=s.scratch,s.U
     # A rejected trial has already replaced the in-place Kahan remainders.
     # Resetting loses at most one Float32 rounding remainder while preserving

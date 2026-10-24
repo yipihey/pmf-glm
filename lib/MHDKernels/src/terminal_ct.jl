@@ -295,6 +295,7 @@ function terminal_ct_induction!(s::MHDState{T}, dt::Real;
                                 cfl::Real=0.4, dissipation::Real=0.05,
                                 dissipation_order::Int=4,
                                 vcap::Real=Inf, max_subcycles::Int=256) where {T}
+    _require_glm(s, "terminal_ct_induction! (cell-centred terminal induction)")
     N = s.dims[1]
     all(==(N), s.dims) || error("terminal CT requires a cubic grid")
     0 < cfl <= 1 || error("terminal CT cfl must be in (0,1]")
