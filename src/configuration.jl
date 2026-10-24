@@ -136,9 +136,16 @@ The production driver repeats these checks on its own environment.
 function _validate_ct_environment(env::AbstractDict)
     lowercase(get(env, "MHD_SOLVER", "glm")) == "ct" || return nothing
     drag = lowercase(get(env, "MHD_DRAG_DT_MODE", ""))
-    drag in ("terminal", "hybrid") && throw(ArgumentError(
-        "mhd_solver=\"ct\" does not support MHD_DRAG_DT_MODE=$drag: the terminal closures " *
-        "overwrite cell-centred B and cannot update CT faces; use radiation, godunov, or explicit"))
+    if drag in ("terminal", "hybrid")
+        induction = lowercase(get(env, "MHD_TERMINAL_INDUCTION", "centered"))
+        pressure = lowercase(get(env, "MHD_TERMINAL_PRESSURE_IMPLICIT", "0")) in
+                   ("1", "true", "yes", "on")
+        induction == "ssprk2" && throw(ArgumentError(
+            "mhd_solver=\"ct\" does not support MHD_TERMINAL_INDUCTION=ssprk2 (cell-centred SSPRK2 " *
+            "with a GLM-style B projection); use ct"))
+        pressure && induction != "ct" && throw(ArgumentError(
+            "mhd_solver=\"ct\" with MHD_TERMINAL_PRESSURE_IMPLICIT=1 requires MHD_TERMINAL_INDUCTION=ct"))
+    end
     lowercase(get(env, "MHD_INTEGRATOR", "ref")) == "cube" && throw(ArgumentError(
         "mhd_solver=\"ct\" requires MHD_INTEGRATOR=ref; the cube integrators are GLM-only"))
     if haskey(env, "MHD_GLM_PROJECT_EVERY")

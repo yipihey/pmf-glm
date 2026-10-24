@@ -1660,13 +1660,55 @@ end
     end
 end
 
+# CT: the first-order velocity-step paths below also write cell-centred B (centred curl of
+# v x B). For mhd_solver=ct the cell v x B is computed from the same velocity into the CT
+# workspace before the cell kernel, the faces then advance by the curl of the edge-averaged
+# EMF, and cell B / total energy are re-derived from the faces after the kernel.
+@kernel function _terminal_ct_cell_emf_k!(ecx, ecy, ecz,
+                                          @Const(rho), @Const(mx), @Const(my), @Const(mz), @Const(E),
+                                          @Const(Bx), @Const(By), @Const(Bz),
+                                          N::Int, inv2dx, gamma_code, gamma_gas, smallr, smallE, vcap)
+    c = @index(Global)
+    @inbounds begin
+        i = (c - 1) % N + 1
+        j = ((c - 1) ÷ N) % N + 1
+        k = (c - 1) ÷ (N * N) + 1
+        x, y, z = _vxb_at(rho, mx, my, mz, E, Bx, By, Bz, i, j, k, N, inv2dx,
+                          gamma_code, gamma_gas, smallr, smallE, vcap)
+        ecx[c] = x; ecy[c] = y; ecz[c] = z
+    end
+end
+
+@kernel function _terminal_ct_cell_emf_cached_k!(ecx, ecy, ecz, @Const(tvx), @Const(tvy), @Const(tvz),
+                                                 @Const(Bx), @Const(By), @Const(Bz),
+                                                 N::Int, vsmooth)
+    c = @index(Global)
+    @inbounds begin
+        i = (c - 1) % N + 1
+        j = ((c - 1) ÷ N) % N + 1
+        k = (c - 1) ÷ (N * N) + 1
+        x, y, z = _vxb_cached_smooth_at(tvx, tvy, tvz, Bx, By, Bz, i, j, k, N, vsmooth)
+        ecx[c] = x; ecy[c] = y; ecz[c] = z
+    end
+end
+
 function _terminal_velocity_step!(be, s, dt::Real, gamma_code::Real, vcap::Real)
+    if MHDKernels.uses_ct(s)
+        ct = s.ct
+        _terminal_ct_cell_emf_k!(be)(ct.ecx, ct.ecy, ct.ecz, s.U[1], s.U[2], s.U[3], s.U[4],
+                                     s.U[5], s.U[6], s.U[7], s.U[8],
+                                     Int(s.dims[1]), T(1) / (T(2) * s.dx),
+                                     T(gamma_code), T(s.γ), T(s.smallr), T(1e-30), T(vcap);
+                                     ndrange=length(s.U[1]))
+        KA.synchronize(be)
+    end
     _terminal_velocity_step_k!(be)(s.scratch..., s.U...,
                                    Int(s.dims[1]), T(dt), T(1) / (T(2) * s.dx),
                                    T(gamma_code), T(s.γ), T(s.smallr), T(1e-30), T(vcap);
                                    ndrange=length(s.U[1]))
     KA.synchronize(be)
     s.U, s.scratch = s.scratch, s.U
+    MHDKernels.uses_ct(s) && MHDKernels.terminal_ct_euler_from_cell_emf!(s, dt)
     return nothing
 end
 
@@ -1714,6 +1756,12 @@ function _terminal_pressure_implicit_step!(be, s, dt::Real, gamma_code::Real,
         finalize_s = @elapsed _terminal_velocity_step!(be, s, dt, gamma_code, vcap)
         return (nsub=1, force_s, pressure_fft_s, finalize_s, induction_s, projection_s)
     end
+    if MHDKernels.uses_ct(s) && induction !== :ct
+        error("MHD_SOLVER=ct with MHD_TERMINAL_PRESSURE_IMPLICIT requires " *
+              "MHD_TERMINAL_INDUCTION=ct (the face-staggered SSPRK2 induction); " *
+              "terminal_induction=$induction advances cell-centred B with a centred curl " *
+              "(and ssprk2 relies on a GLM-style B projection), which cannot keep CT faces consistent")
+    end
     if induction === :ct
         result = MHDKernels.terminal_pressure_ct_step!(_terminal_pressure_exponential_solve!, s, dt;
             gamma_drag=gamma_code, pressure_coeff=pressure_coeff,
@@ -1721,7 +1769,9 @@ function _terminal_pressure_implicit_step!(be, s, dt::Real, gamma_code::Real,
             induction_dissipation=induction_dissipation,
             induction_dissipation_order=induction_dissipation_order,
             vcap=vcap, max_induction_subcycles=max_induction_subcycles)
-        if project_b
+        # CT: the face update keeps div b at round-off, so the cell-centred B projection
+        # (which would overwrite the face average) is skipped.
+        if project_b && !MHDKernels.uses_ct(s)
             projection_s = @elapsed _project_mhd_b!(be, s)
             return merge(result, (; projection_s))
         end
@@ -1853,12 +1903,20 @@ function _terminal_velocity_step_cached!(be, s, dt::Real, gamma_code::Real, vcap
                                     T(gamma_code), T(s.γ), T(s.smallr), T(1e-30), T(vcap);
                                     ndrange=length(s.U[1]))
     KA.synchronize(be)
+    if MHDKernels.uses_ct(s)
+        ct = s.ct
+        _terminal_ct_cell_emf_cached_k!(be)(ct.ecx, ct.ecy, ct.ecz, tvx, tvy, tvz,
+                                            s.U[6], s.U[7], s.U[8], Int(s.dims[1]), T(vsmooth);
+                                            ndrange=length(s.U[1]))
+        KA.synchronize(be)
+    end
     _terminal_velocity_update_cached_k!(be)(s.scratch..., s.U..., tvx, tvy, tvz,
                                             Int(s.dims[1]), T(dt), T(1) / (T(2) * s.dx),
                                             T(s.γ), T(s.smallr), T(1e-30), T(vsmooth);
                                             ndrange=length(s.U[1]))
     KA.synchronize(be)
     s.U, s.scratch = s.scratch, s.U
+    MHDKernels.uses_ct(s) && MHDKernels.terminal_ct_euler_from_cell_emf!(s, dt)
     return nothing
 end
 
@@ -1954,6 +2012,25 @@ function _terminal_implicit_diffuse_B!(s, coeff_cells2::Real)
         return nothing
     end
     N = Int(s.dims[1])
+    if MHDKernels.uses_ct(s)
+        # The implicit diffusion is a translation-invariant Fourier multiplier, so applying it
+        # to every FACE component commutes with the face divergence (div b stays at
+        # round-off). Cell B is re-derived as the face average; as for GLM, E is untouched.
+        ct = s.ct
+        # The faces are views into one packed buffer; the device FFT wrappers are not
+        # guaranteed to honour view offsets (Metal gave a corrupted field), so stage each
+        # face through two full scratch arrays.
+        for face in (ct.bxf, ct.byf, ct.bzf)
+            copyto!(s.scratch[6], face)
+            PoissonKernels.rfft_implicit_diffuse!(reshape(s.scratch[7], N, N, N),
+                                                  reshape(s.scratch[6], N, N, N); coeff_cells2=coeff)
+            copyto!(face, s.scratch[7])
+        end
+        MHDKernels._ct_bcc_k!(s.be, 256)(s.U[6], s.U[7], s.U[8], ct.bxf, ct.byf, ct.bzf,
+                                         N, N, N; ndrange=length(s.U[1]))
+        KA.synchronize(s.be)
+        return nothing
+    end
     for v in 6:8
         dst = reshape(s.scratch[v], N, N, N)
         src = reshape(s.U[v], N, N, N)
@@ -4843,10 +4920,16 @@ function main()
     if use_ct
         # Constrained transport keeps B on faces. Every path below that writes
         # cell-centred B during the evolution is unreachable for CT or rejected here.
-        drag_dt_mode in (:terminal, :hybrid) && error(
-            "MHD_SOLVER=ct does not support MHD_DRAG_DT_MODE=$(drag_dt_mode): the terminal " *
-            "closures overwrite cell-centred B and cannot update CT faces; use radiation, " *
-            "godunov, or explicit")
+        # Terminal/hybrid: every terminal B writer has a face-staggered CT counterpart; the
+        # genuinely cell-wise options are rejected here.
+        if drag_dt_mode in (:terminal, :hybrid)
+            terminal_pressure_implicit && terminal_induction !== :ct && error(
+                "MHD_SOLVER=ct with MHD_TERMINAL_PRESSURE_IMPLICIT=1 requires " *
+                "MHD_TERMINAL_INDUCTION=ct (centered/ssprk2 advance cell-centred B)")
+            terminal_induction === :ssprk2 && error(
+                "MHD_SOLVER=ct does not support MHD_TERMINAL_INDUCTION=ssprk2 (cell-centred " *
+                "SSPRK2 with a GLM-style B projection); use ct")
+        end
         haskey(ENV, "MHD_GLM_PROJECT_EVERY") &&
             parse(Int, ENV["MHD_GLM_PROJECT_EVERY"]) > 0 && error(
             "MHD_SOLVER=ct does not use GLM B projection: MHD_GLM_PROJECT_EVERY=" *

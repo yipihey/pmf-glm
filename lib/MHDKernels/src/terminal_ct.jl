@@ -281,6 +281,210 @@ end
     end
 end
 
+# ── Face-staggered (constrained-transport) terminal induction ────────────────────────────
+# For `mhd_solver=:ct` states the same SSPRK2 scheme advances the FACE fields. The cell EMF
+# e = v x B is computed exactly as above (cell-centred v and B), averaged to the cell EDGES
+# (each edge EMF is the mean of the four cells sharing the edge), and the faces advance by the
+# discrete curl of the edge EMFs. The dissipation is the face-component Laplacian (order 2) or
+# bilaplacian (order 4) with the identical stencils; both commute with the face divergence
+# on a periodic grid, so div b stays at round-off. Cell-centred B is the face average after every
+# stage and the total energy follows the magnetic-energy change as in `_tct_correct_k!`.
+# Workspace (free outside the Godunov step): ct.ec* (cell EMF), ct.e* (edge EMF), ct.mf*
+# (predicted faces).
+
+@kernel function _tctc_cell_emf_k!(ecx, ecy, ecz,
+                                   @Const(rho), @Const(fx), @Const(fy), @Const(fz),
+                                   @Const(Bx), @Const(By), @Const(Bz),
+                                   N::Int, inv2dx, gamma_drag, pressure_coeff, smallr, vcap)
+    c = @index(Global)
+    @inbounds begin
+        i = (c - 1) % N + 1
+        j = ((c - 1) ÷ N) % N + 1
+        k = (c - 1) ÷ (N*N) + 1
+        x, y, z = _tct_emf_at(rho, fx, fy, fz, Bx, By, Bz, i, j, k, N, inv2dx,
+                              gamma_drag, pressure_coeff, smallr, vcap)
+        ecx[c] = x; ecy[c] = y; ecz[c] = z
+    end
+end
+
+# Cell EMF v x B from prescribed cell velocity arrays (radiation terminal closure).
+@kernel function _tctc_cell_emf_v_k!(ecx, ecy, ecz, @Const(vx), @Const(vy), @Const(vz),
+                                     @Const(Bx), @Const(By), @Const(Bz), N::Int)
+    c = @index(Global)
+    @inbounds begin
+        i = (c - 1) % N + 1
+        j = ((c - 1) ÷ N) % N + 1
+        k = (c - 1) ÷ (N*N) + 1
+        x, y, z = _rtct_emf_at(vx, vy, vz, Bx, By, Bz, i, j, k, N)
+        ecx[c] = x; ecy[c] = y; ecz[c] = z
+    end
+end
+
+# Edge EMF = mean of the four cells sharing the edge. Lower-face convention of ct.jl:
+# ez at (i-1/2,j-1/2,k), ex at (i,j-1/2,k-1/2), ey at (i-1/2,j,k-1/2).
+@kernel function _tctc_edge_k!(ex, ey, ez, @Const(ecx), @Const(ecy), @Const(ecz), N::Int)
+    c = @index(Global)
+    @inbounds begin
+        T = eltype(ex)
+        i = (c - 1) % N + 1
+        j = ((c - 1) ÷ N) % N + 1
+        k = (c - 1) ÷ (N*N) + 1
+        c0 = c
+        cim = _tct_lin3(i - 1, j, k, N); cjm = _tct_lin3(i, j - 1, k, N)
+        ckm = _tct_lin3(i, j, k - 1, N)
+        cimjm = _tct_lin3(i - 1, j - 1, k, N)
+        cjmkm = _tct_lin3(i, j - 1, k - 1, N)
+        ckmim = _tct_lin3(i - 1, j, k - 1, N)
+        q = T(0.25)
+        ez[c] = q * (ecz[c0] + ecz[cim] + ecz[cjm] + ecz[cimjm])
+        ex[c] = q * (ecx[c0] + ecx[cjm] + ecx[ckm] + ecx[cjmkm])
+        ey[c] = q * (ecy[c0] + ecy[cim] + ecy[ckm] + ecy[ckmim])
+    end
+end
+
+# d/dt of the faces: curl of the edge EMFs (e = v x B) plus face dissipation of `A*`.
+@inline function _tctc_rate_at(ex, ey, ez, Ax, Ay, Az, i, j, k, N, invdx, invdx2,
+                               eta, dissipation_order::Int)
+    c  = _tct_lin3(i, j, k, N)
+    ip = _tct_lin3(i + 1, j, k, N); jp = _tct_lin3(i, j + 1, k, N)
+    kp = _tct_lin3(i, j, k + 1, N)
+    dx = ((ez[jp] - ez[c]) - (ey[kp] - ey[c])) * invdx
+    dy = ((ex[kp] - ex[c]) - (ez[ip] - ez[c])) * invdx
+    dz = ((ey[ip] - ey[c]) - (ex[jp] - ex[c])) * invdx
+    if dissipation_order == 4
+        return dx - eta * _tct_bilap_at(Ax, i, j, k, N, invdx2),
+               dy - eta * _tct_bilap_at(Ay, i, j, k, N, invdx2),
+               dz - eta * _tct_bilap_at(Az, i, j, k, N, invdx2)
+    end
+    return dx + eta * _tct_lap_at(Ax, i, j, k, N, invdx2),
+           dy + eta * _tct_lap_at(Ay, i, j, k, N, invdx2),
+           dz + eta * _tct_lap_at(Az, i, j, k, N, invdx2)
+end
+
+@kernel function _tctc_predict_k!(pbx, pby, pbz, @Const(bxf), @Const(byf), @Const(bzf),
+                                  @Const(ex), @Const(ey), @Const(ez),
+                                  N::Int, dt, invdx, invdx2, eta, dissipation_order::Int)
+    c = @index(Global)
+    @inbounds begin
+        i = (c - 1) % N + 1
+        j = ((c - 1) ÷ N) % N + 1
+        k = (c - 1) ÷ (N*N) + 1
+        x, y, z = _tctc_rate_at(ex, ey, ez, bxf, byf, bzf, i, j, k, N, invdx, invdx2,
+                                eta, dissipation_order)
+        pbx[c] = bxf[c] + dt*x
+        pby[c] = byf[c] + dt*y
+        pbz[c] = bzf[c] + dt*z
+    end
+end
+
+# SSPRK2 corrector on the faces; edge EMFs belong to the predicted state. `COMP` selects
+# Kahan-compensated accumulation (mirrors `_rtct_correct_k!`'s compensated branch).
+@kernel function _tctc_correct_k!(bxf, byf, bzf, rbx, rby, rbz,
+                                  @Const(pbx), @Const(pby), @Const(pbz),
+                                  @Const(ex), @Const(ey), @Const(ez),
+                                  N::Int, dt, invdx, invdx2, eta, dissipation_order::Int,
+                                  compensated::Val{COMP}) where {COMP}
+    c = @index(Global)
+    @inbounds begin
+        T = eltype(bxf)
+        i = (c - 1) % N + 1
+        j = ((c - 1) ÷ N) % N + 1
+        k = (c - 1) ÷ (N*N) + 1
+        x, y, z = _tctc_rate_at(ex, ey, ez, pbx, pby, pbz, i, j, k, N, invdx, invdx2,
+                                eta, dissipation_order)
+        ox = bxf[c]; oy = byf[c]; oz = bzf[c]
+        if COMP
+            bxf[c] = _compensated_update!(rbx, c, ox, T(0.5) * ((pbx[c] - ox) + dt*x), Val(true))
+            byf[c] = _compensated_update!(rby, c, oy, T(0.5) * ((pby[c] - oy) + dt*y), Val(true))
+            bzf[c] = _compensated_update!(rbz, c, oz, T(0.5) * ((pbz[c] - oz) + dt*z), Val(true))
+        else
+            bxf[c] = T(0.5) * (ox + pbx[c] + dt*x)
+            byf[c] = T(0.5) * (oy + pby[c] + dt*y)
+            bzf[c] = T(0.5) * (oz + pbz[c] + dt*z)
+        end
+    end
+end
+
+# Cell B <- face average; E += magnetic-energy change (floor smallE), as `_tct_correct_k!`.
+@kernel function _tctc_cell_energy_k!(Bx, By, Bz, E, @Const(bxf), @Const(byf), @Const(bzf),
+                                      N::Int, smallE)
+    c = @index(Global)
+    @inbounds begin
+        T = eltype(E)
+        i = (c - 1) % N + 1
+        j = ((c - 1) ÷ N) % N + 1
+        k = (c - 1) ÷ (N*N) + 1
+        nx = T(0.5) * (bxf[c] + bxf[_tct_lin3(i + 1, j, k, N)])
+        ny = T(0.5) * (byf[c] + byf[_tct_lin3(i, j + 1, k, N)])
+        nz = T(0.5) * (bzf[c] + bzf[_tct_lin3(i, j, k + 1, N)])
+        ox = Bx[c]; oy = By[c]; oz = Bz[c]
+        eb0 = T(0.5) * (ox*ox + oy*oy + oz*oz)
+        eb1 = T(0.5) * (nx*nx + ny*ny + nz*nz)
+        Bx[c] = nx; By[c] = ny; Bz[c] = nz
+        E[c] = max(E[c] + eb1 - eb0, smallE)
+    end
+end
+
+# Edge EMFs from the cell EMFs held in ct.ec*.
+function _tctc_edges!(s::MHDState, N::Int)
+    ct = s.ct
+    _tctc_edge_k!(s.be)(ct.ex, ct.ey, ct.ez, ct.ecx, ct.ecy, ct.ecz, N; ndrange=ncells(s))
+    return nothing
+end
+
+# Predictor: faces -> ct.mf* (stage state), cell B of the predictor -> scratch[6:8].
+function _tctc_predict!(s::MHDState{T}, N, dt, invdx, invdx2, eta, order) where {T}
+    ct = s.ct
+    _tctc_predict_k!(s.be)(ct.mfx, ct.mfy, ct.mfz, ct.bxf, ct.byf, ct.bzf,
+                           ct.ex, ct.ey, ct.ez, N, dt, invdx, invdx2, eta, order;
+                           ndrange=ncells(s))
+    _ct_bcc_k!(s.be, 256)(s.scratch[6], s.scratch[7], s.scratch[8],
+                          ct.mfx, ct.mfy, ct.mfz, N, N, N; ndrange=ncells(s))
+    return nothing
+end
+
+# Corrector: faces advance, then cell B / E follow.
+function _tctc_correct!(s::MHDState{T}, N, dt, invdx, invdx2, eta, order, comp::Val) where {T}
+    ct = s.ct
+    _tctc_correct_k!(s.be)(ct.bxf, ct.byf, ct.bzf, ct.rbx, ct.rby, ct.rbz,
+                           ct.mfx, ct.mfy, ct.mfz, ct.ex, ct.ey, ct.ez,
+                           N, dt, invdx, invdx2, eta, order, comp; ndrange=ncells(s))
+    _tctc_cell_energy_k!(s.be)(s.U[6], s.U[7], s.U[8], s.U[5], ct.bxf, ct.byf, ct.bzf,
+                               N, T(1e-30); ndrange=ncells(s))
+    return nothing
+end
+
+# One forward-Euler face update from cell EMFs already stored in ct.ec* (used by the
+# first-order velocity-step terminal paths of the production runner): edge average, faces +=
+# dt curl(e) (Kahan-compensated through ct.rb*), then cell B <- face average with E += (|B_face|^2 - |B_cell|^2)/2, replacing the
+# provisional cell-centred B (and its energy) that the caller's cell kernel wrote.
+@kernel function _tctc_euler_k!(bxf, byf, bzf, rbx, rby, rbz,
+                                @Const(ex), @Const(ey), @Const(ez), N::Int, dt, invdx)
+    c = @index(Global)
+    @inbounds begin
+        i = (c - 1) % N + 1
+        j = ((c - 1) ÷ N) % N + 1
+        k = (c - 1) ÷ (N*N) + 1
+        ip = _tct_lin3(i + 1, j, k, N); jp = _tct_lin3(i, j + 1, k, N)
+        kp = _tct_lin3(i, j, k + 1, N)
+        bxf[c] = _compensated_update!(rbx, c, bxf[c], dt * ((ez[jp] - ez[c]) - (ey[kp] - ey[c])) * invdx, Val(true))
+        byf[c] = _compensated_update!(rby, c, byf[c], dt * ((ex[kp] - ex[c]) - (ez[ip] - ez[c])) * invdx, Val(true))
+        bzf[c] = _compensated_update!(rbz, c, bzf[c], dt * ((ey[ip] - ey[c]) - (ex[jp] - ex[c])) * invdx, Val(true))
+    end
+end
+
+function terminal_ct_euler_from_cell_emf!(s::MHDState{T}, dt::Real) where {T}
+    uses_ct(s) || error("terminal_ct_euler_from_cell_emf! needs a CT state")
+    N = s.dims[1]; ct = s.ct
+    _tctc_edges!(s, N)
+    _tctc_euler_k!(s.be)(ct.bxf, ct.byf, ct.bzf, ct.rbx, ct.rby, ct.rbz, ct.ex, ct.ey, ct.ez, N, T(dt), inv(s.dx);
+                         ndrange=ncells(s))
+    _ct_cell_from_faces_k!(s.be, 256)(s.U[5], s.U[6], s.U[7], s.U[8], s.U[9],
+                                      ct.bxf, ct.byf, ct.bzf, N, N, N; ndrange=ncells(s))
+    KA.synchronize(s.be)
+    return nothing
+end
+
 """
     terminal_ct_induction!(s, dt; gamma_drag, pressure_coeff, cfl=0.4,
                            dissipation=0.05, dissipation_order=4,
@@ -289,13 +493,18 @@ end
 Advance only the terminal-regime induction equation. Density and pressure are
 held at the caller-provided macro-step state in `s`; Lorentz force and velocity
 are recomputed at both SSPRK2 stages. Returns `(nsubcycles, vmax, eta)`.
+
+For `mhd_solver=:ct` states the faces advance (see the face-staggered section above); with
+`compensate=true` (default, CT only) each face update is Kahan-compensated through the persistent
+face remainders `s.ct.rbx/rby/rbz`, which keeps the Float32 face divergence at round-off over
+thousands of sub-ulp updates. GLM states ignore `compensate`.
 """
 function terminal_ct_induction!(s::MHDState{T}, dt::Real;
                                 gamma_drag::Real, pressure_coeff::Real,
                                 cfl::Real=0.4, dissipation::Real=0.05,
                                 dissipation_order::Int=4,
-                                vcap::Real=Inf, max_subcycles::Int=256) where {T}
-    _require_glm(s, "terminal_ct_induction! (cell-centred terminal induction)")
+                                vcap::Real=Inf, max_subcycles::Int=256,
+                                compensate::Bool=true) where {T}
     N = s.dims[1]
     all(==(N), s.dims) || error("terminal CT requires a cubic grid")
     0 < cfl <= 1 || error("terminal CT cfl must be in (0,1]")
@@ -313,6 +522,12 @@ function terminal_ct_induction!(s::MHDState{T}, dt::Real;
     eta = dissipation_order == 4 ?
           T(dissipation / 12) * T(vmax) * s.dx^3 :
           T(dissipation) * T(vmax) * s.dx
+    if uses_ct(s)
+        _terminal_ct_face_subcycles!(s, nsub, dts, eta, dissipation_order;
+                                     gamma_drag, pressure_coeff, vcap, compensate)
+        KA.synchronize(s.be)
+        return nsub, vmax, Float64(eta)
+    end
     for _ in 1:nsub
         terminal_magnetic_force!(s, fx, fy, fz)
         _tct_predict_k!(s.be)(s.scratch[6], s.scratch[7], s.scratch[8],
@@ -332,4 +547,29 @@ function terminal_ct_induction!(s::MHDState{T}, dt::Real;
     end
     KA.synchronize(s.be)
     return nsub, vmax, Float64(eta)
+end
+
+# CT variant of the subcycle loop (see the face-staggered section above).
+function _terminal_ct_face_subcycles!(s::MHDState{T}, nsub, dts, eta, order;
+                                      gamma_drag, pressure_coeff, vcap, compensate) where {T}
+    N = s.dims[1]; ct = s.ct
+    fx, fy, fz = s.scratch[2], s.scratch[3], s.scratch[4]
+    inv2dx = inv(T(2) * s.dx); invdx = inv(s.dx); invdx2 = inv(s.dx * s.dx)
+    gd = T(gamma_drag); pc = T(pressure_coeff); vc = T(vcap)
+    for _ in 1:nsub
+        terminal_magnetic_force!(s, fx, fy, fz)
+        _tctc_cell_emf_k!(s.be)(ct.ecx, ct.ecy, ct.ecz, s.U[1], fx, fy, fz,
+                                s.U[6], s.U[7], s.U[8], N, inv2dx, gd, pc, s.smallr, vc;
+                                ndrange=ncells(s))
+        _tctc_edges!(s, N)
+        _tctc_predict!(s, N, dts, invdx, invdx2, eta, order)
+        _tct_magnetic_force_k!(s.be)(fx, fy, fz, s.scratch[6], s.scratch[7], s.scratch[8],
+                                     N, inv2dx; ndrange=ncells(s))
+        _tctc_cell_emf_k!(s.be)(ct.ecx, ct.ecy, ct.ecz, s.U[1], fx, fy, fz,
+                                s.scratch[6], s.scratch[7], s.scratch[8],
+                                N, inv2dx, gd, pc, s.smallr, vc; ndrange=ncells(s))
+        _tctc_edges!(s, N)
+        _tctc_correct!(s, N, dts, invdx, invdx2, eta, order, Val(compensate))
+    end
+    return nothing
 end

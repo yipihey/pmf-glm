@@ -76,7 +76,7 @@ before any state is allocated (both in the TOML validation and again in the driv
 | Option | With `mhd_solver = "ct"` |
 |---|---|
 | `MHD_INTEGRATOR` | Default `ref` on every backend; an explicit `cube` is an error |
-| `physics.drag_mode` | `terminal` and `hybrid` are errors (they overwrite cell-centred B) |
+| `physics.drag_mode` | `terminal` and `hybrid` are supported (face-staggered terminal induction, still `MHD_ALLOW_UNCERTIFIED_TERMINAL=1`). Errors: `MHD_TERMINAL_INDUCTION=ssprk2`, and `MHD_TERMINAL_PRESSURE_IMPLICIT=1` with an induction other than `ct` (cell-centred B writers) |
 | `physics.glm_project_every` | Default `0` (GLM radiation runs default to projecting every cycle); a value above zero is an error |
 | `physics.glm_ch_factor`, `MHD_GLM_CR` | Unused. The explicit step is not limited by the GLM speed `ch`; `dt` is the plain CFL step |
 | `backend` | CPU and Metal; CUDA is not run |

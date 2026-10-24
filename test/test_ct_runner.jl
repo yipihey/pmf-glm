@@ -103,13 +103,15 @@ let
     base = run_environment(config; output_dir=mktempdir())
     script = joinpath(@__DIR__, "..", "scripts", "_production.jl")
     project = dirname(Base.active_project())
-    cases = [("MHD_DRAG_DT_MODE" => "terminal", "does not support MHD_DRAG_DT_MODE=terminal"),
-             ("MHD_DRAG_DT_MODE" => "hybrid", "does not support MHD_DRAG_DT_MODE=hybrid"),
-             ("MHD_INTEGRATOR" => "cube", "requires MHD_INTEGRATOR=ref"),
-             ("MHD_GLM_PROJECT_EVERY" => "1", "does not use GLM B projection")]
-    jobs = map(cases) do ((key, value), _)
+    cases = [(Dict("MHD_DRAG_DT_MODE" => "terminal", "MHD_TERMINAL_INDUCTION" => "ssprk2"),
+              "does not support MHD_TERMINAL_INDUCTION=ssprk2"),
+             (Dict("MHD_DRAG_DT_MODE" => "hybrid", "MHD_TERMINAL_PRESSURE_IMPLICIT" => "1"),
+              "requires MHD_TERMINAL_INDUCTION=ct"),
+             (Dict("MHD_INTEGRATOR" => "cube"), "requires MHD_INTEGRATOR=ref"),
+             (Dict("MHD_GLM_PROJECT_EVERY" => "1"), "does not use GLM B projection")]
+    jobs = map(cases) do (extra, _)
         env = Dict(k => v for (k, v) in ENV if !startswith(k, "MHD_"))
-        merge!(env, base, Dict(key => value, "MHD_ALLOW_UNCERTIFIED_TERMINAL" => "1"))
+        merge!(env, base, extra, Dict("MHD_ALLOW_UNCERTIFIED_TERMINAL" => "1"))
         log = tempname()
         process = run(pipeline(setenv(`$(Base.julia_cmd()) --project=$project $script`, env);
                                stdout=log, stderr=log, ); wait=false)

@@ -470,8 +470,7 @@ end
     @test ledger.samples == 2
     @test_throws ErrorException step_radiation_godunov!(sr, ws, 2f-4; drag_impulse=1f-3, closure=rc,
                                                         ch=0f0, integrator=:cube, photon_state=photons)
-    # cell-centred terminal induction would overwrite B: refused
-    @test_throws ErrorException terminal_ct_induction!(sr, 1f-4; gamma_drag=10, pressure_coeff=1)
+    # terminal induction on CT states advances the faces (test_terminal_ct_equivalence.jl)
 end
 
 # ── Compensated (Kahan) CT face updates under a strong guide field ───────────────────
