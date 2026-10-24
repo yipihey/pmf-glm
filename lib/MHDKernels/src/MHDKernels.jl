@@ -24,6 +24,10 @@ Design contract (mirrors `PPMKernels`):
   * **Conserved order** `U = (ρ, ρvx, ρvy, ρvz, E, Bx, By, Bz, ψ)`;
     **primitive order** `W = (ρ, vx, vy, vz, p, Bx, By, Bz, ψ)`.
 
+Optional **constrained transport** (`allocate_state(...; mhd_solver=:ct)`): a
+face-staggered, Gardiner-Stone-2005 upwinded-EMF alternative to GLM for the `:ref`
+integrator on periodic grids (see `ct.jl`); GLM remains the default.
+
 Two integrators, cross-checked: a portable per-cell **reference** kernel
 (`step_ref!`, runs on every backend incl. CPU-f64) and a shared-memory **cube**
 kernel (`step_cube!`, GPU throughput path). Both implement the identical scheme.
@@ -78,6 +82,7 @@ include("boundary.jl")        # per-axis BCs (periodic/outflow/reflecting), ghos
 include("state.jl")           # MHDState (9 SoA fields) + cons/prim host helpers
 include("passive_transport.jl") # allocation-free bounded chemistry-species remap
 include("integrator_ref.jl")  # portable per-cell reference integrator (CPU + GPU)
+include("ct.jl")            # face-staggered constrained transport (alternative to GLM)
 include("integrator_cube.jl") # fused shared-memory cube integrator (GPU throughput)
 include("timestep.jl")        # CFL Δt reduction
 include("diagnostics.jl")     # max|∇·B|, conserved totals

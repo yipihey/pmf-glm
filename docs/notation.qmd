@@ -66,7 +66,9 @@ band limits, shell averaging, and any additional smoothing when comparing power.
 normalization are different as described in [initial conditions](initial-conditions.qmd).
 `divBdx_over_brms` uses the centered-grid divergence and grid spacing divided
 by measured magnetic RMS. It is a numerical diagnostic, not a proof of exact
-continuum solenoidality.
+continuum solenoidality. For constrained-transport runs `divb_face_dx_over_brms`
+uses the exact face divergence (round-off level); `divBdx_over_brms` stays the
+centred cell-field quantity and is not constrained to zero.
 
 `delta_b_rms` and `delta_dm_rms` measure density contrasts; they are not raw
 density standard deviations in g/cm3. Density PDFs are volume-weighted per

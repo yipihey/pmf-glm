@@ -1,0 +1,36 @@
+# Short full-physics run for installation verification, not a science result.
+# Constrained-transport (CT) counterpart of cosmology-smoke.toml for comparison with the
+# default GLM run: identical except `mhd_solver = "ct"`. CT is periodic-only, uses the
+# reference integrator, and is not GLM-limited (see docs/validation.qmd).
+[run]
+mhd_solver = "ct"
+n = 16
+backend = "cpu"
+max_cycles = 32
+cfl = 0.2
+reconstruction = "plm"
+print_every = 1
+check_every = 1
+
+[cosmology]
+zstart = 3200.0
+zend = 3199.9
+box_ckpc_h = 1.0
+
+[magnetic]
+b0_ng = 0.003
+kcut = 12.566370614359172
+kmax = 12.566370614359172
+minimum_cells_per_wavelength = 8
+seed = 42
+
+[chemistry]
+mode = "mixing"
+smoothing = "gaussian"
+smoothing_sigma_cells = 2.0
+
+[diagnostics]
+every = 1
+angle_bins = 1
+spectrum_bins = 8
+energy_ledger_every = 1

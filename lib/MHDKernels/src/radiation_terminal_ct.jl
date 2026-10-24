@@ -206,6 +206,34 @@ end
     end
 end
 
+# CT variant: velocities come from the radiation closure at the stage state (cell B = face
+# average), the cell EMF v x B is averaged to the edges and the faces advance by its curl.
+function _radiation_terminal_ct_face_subcycles!(s::MHDState{T}, ws, nsub, dts, eta, order,
+        velocity, gamma_drag, closure, compensated) where {T}
+    n = s.dims[1]; ct = s.ct
+    invdx = inv(s.dx); invdx2 = inv(s.dx * s.dx)
+    for subcycle in 1:nsub
+        if subcycle > 1
+            velocity = radiation_terminal_velocity!(ws, s;
+                gamma_drag=gamma_drag, closure=closure)
+        end
+        _tctc_cell_emf_v_k!(s.be)(ct.ecx, ct.ecy, ct.ecz, velocity..., s.U[6], s.U[7], s.U[8],
+                                  n; ndrange=ncells(s))
+        _tctc_edges!(s, n)
+        _tctc_predict!(s, n, dts, invdx, invdx2, eta, order)
+        predictor = (s.U[1], s.U[2], s.U[3], s.U[4], s.U[5],
+                     s.scratch[6], s.scratch[7], s.scratch[8], s.U[9])
+        velocity = radiation_terminal_velocity!(ws, s; state=predictor,
+            gamma_drag=gamma_drag, closure=closure)
+        _tctc_cell_emf_v_k!(s.be)(ct.ecx, ct.ecy, ct.ecz, velocity...,
+                                  s.scratch[6], s.scratch[7], s.scratch[8], n;
+                                  ndrange=ncells(s))
+        _tctc_edges!(s, n)
+        _tctc_correct!(s, n, dts, invdx, invdx2, eta, order, compensated)
+    end
+    return nothing
+end
+
 """
     radiation_terminal_ct_induction!(s, ws, dt; gamma_drag, closure,
                                      cfl=0.4, dissipation=0.05,
@@ -261,6 +289,13 @@ function radiation_terminal_ct_induction!(s::MHDState{T}, ws::RadiationWorkspace
                (s.scratch[2], s.scratch[3], s.scratch[4]) : compensation
     compensated = Val(compensation !== nothing)
 
+    if uses_ct(s)
+        # Face-staggered variant: compensation (if requested) uses the persistent CT face
+        # remainders s.ct.rbx/rby/rbz (zero them once before the first step); the arrays in
+        # `compensation` are not used.
+        _radiation_terminal_ct_face_subcycles!(s, ws, nsub, dts, eta, dissipation_order,
+            velocity, gamma_drag, closure, compensated)
+    else
     for subcycle in 1:nsub
         if subcycle > 1
             velocity = radiation_terminal_velocity!(ws, s;
@@ -278,6 +313,7 @@ function radiation_terminal_ct_induction!(s::MHDState{T}, ws::RadiationWorkspace
             residual..., n, dts, inv2dx, invdx2, eta, dissipation_order,
             T(1e-30), compensated;
             ndrange=ncells(s))
+    end
     end
     KA.synchronize(s.be)
     rc = _radiation_terminal_closure(T, closure)

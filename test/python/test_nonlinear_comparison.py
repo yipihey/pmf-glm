@@ -44,3 +44,19 @@ def test_native_case_preserves_handoff_units_and_full_sources():
     assert values["physics"]["photon_response"] == "moments_exponential"
     assert values["environment"]["MHD_CHEM_FALPHA"] == 0
     assert values["environment"]["MHD_RADIATION_FREE_STREAM_TOL"] == 0
+
+
+def _args(**kw):
+    base = dict(hubble=0.674,resolution=32,backend="cpu",cfl=0.2,zstart=3200,zend=3100,
+        box_ckpc_h=1,field_pg=300,theta=np.pi/4,epsilon=0.025,outputs=9,response_table=None)
+    return Namespace(**{**base,**kw})
+
+
+def test_mhd_solver_option_sets_toml_and_drops_glm_projection():
+    handoff=dict(velocity_unit_cm_s_at_handoff=1,background=dict(xHII=0.9,pressure_code_mean=2.5))
+    glm=case_settings(handoff,Path("s"),_args())
+    assert "mhd_solver" not in glm["run"] and glm["physics"]["glm_project_every"] == 8
+    ct=case_settings(handoff,Path("s"),_args(mhd_solver="ct"))
+    assert ct["run"]["mhd_solver"] == "ct" and "glm_project_every" not in ct["physics"]
+    ct["run"].pop("mhd_solver"); ct["physics"]["glm_project_every"] = 8
+    assert ct == glm

@@ -19,7 +19,14 @@ export max_divb, conserved_totals
     end
 end
 
-"`max_divb(s)` — max |∇·B| over the grid (BC-aware central differences)."
+"""
+    max_divb(s)
+
+Max |∇·B| over the grid (BC-aware central differences of the cell-centred field).
+For a constrained-transport state (`mhd_solver=:ct`) the quantity the solver preserves
+is the FACE divergence, [`max_divb_face`](@ref); the centred value reported here is
+a different discretization and is not zero for a CT state.
+"""
 function max_divb(s::MHDState{T}) where {T}
     Nx,Ny,Nz = s.dims; cx,cy,cz = bc_codes(s)
     d = device_zeros(s.be, T, (ncells(s),))

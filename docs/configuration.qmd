@@ -39,6 +39,7 @@ and validation are in `CONFIG_KEYS`.
 | `[run]` | `n`, `backend`, `precision`, `steps`, `max_cycles`, `cfl` | Grid, device, numerical budget |
 | `[run]` | `reconstruction`, `riemann`, `print_every`, `check_every` | Scheme and log/health cadence |
 | `[run]` | `checkpoint_every`, `checkpoint_final`, `resume` | Checkpoint write/resume policy |
+| `[run]` | `mhd_solver` | Divergence treatment: `"glm"` (default) or `"ct"` ([constrained transport](#sec-mhd-solver)) |
 | `[cosmology]` | `zstart`, `zend`, `h`, `omega_m`, `omega_b`, `omega_lambda`, `omega_r` | Expansion history |
 | `[cosmology]` | `box_ckpc_h`, `max_dln_a` | Physical comoving box in ckpc/h, expansion step cap |
 | `[magnetic]` | `initial_condition`, `b0_ng`, `brms_code`, `seed` | IC family, comoving nG or code amplitude |
@@ -57,6 +58,35 @@ and validation are in `CONFIG_KEYS`.
 `n` must be even and at least 8. The facade requires finite `zstart > zend >= 0`,
 a positive physical box, and a positive comoving `b0_ng` for cosmological configs.
 Some transform paths impose additional size/factorization restrictions.
+
+## Selecting the MHD solver {#sec-mhd-solver}
+
+`run.mhd_solver = "glm" | "ct"` (environment `MHD_SOLVER`) selects how
+$\nabla\cdot\mathbf B$ is controlled. `"glm"` is the default and the research
+baseline; leaving the key out gives exactly the previous behavior. `"ct"` selects
+the face-staggered constrained-transport scheme of [the physics chapter](physics.qmd#sec-ct),
+for example `examples/cosmology-smoke-ct.toml` as the
+counterpart of `examples/cosmology-smoke.toml`. The choice is recorded in
+`metadata.toml` (`mhd_solver`, plus `ct_initial_*` numbers for CT), in the `CONFIG`
+log line, in `performance.tsv` (`mhd_solver`), and in the checkpoint fingerprint.
+
+For CT the facade changes these defaults and rejects options that cannot work,
+before any state is allocated (both in the TOML validation and again in the driver):
+
+| Option | With `mhd_solver = "ct"` |
+|---|---|
+| `MHD_INTEGRATOR` | Default `ref` on every backend; an explicit `cube` is an error |
+| `physics.drag_mode` | `terminal` and `hybrid` are supported (face-staggered terminal induction, still `MHD_ALLOW_UNCERTIFIED_TERMINAL=1`). Errors: `MHD_TERMINAL_INDUCTION=ssprk2`, and `MHD_TERMINAL_PRESSURE_IMPLICIT=1` with an induction other than `ct` (cell-centred B writers) |
+| `physics.glm_project_every` | Default `0` (GLM radiation runs default to projecting every cycle); a value above zero is an error |
+| `physics.glm_ch_factor`, `MHD_GLM_CR` | The explicit step is not limited by the GLM speed `ch`; `dt` is the plain CFL step. `glm_ch_factor` only scales the radiation positivity wave-speed limit (next rows); `MHD_GLM_CR` is unused |
+| `backend` | CPU and Metal; CUDA is not run |
+| `MHD_RADIATION_MAGNETIC_COMPENSATION` | `1` also makes the radiation-coupled steps sum the CT face updates with Kahan compensation (GLM: cell `B`); the face remainders are checkpointed as `ct_residual_1..3`. Use it for strong-guide-field, Float32 cases (the native-mode case sets it) |
+| `MHD_RADIATION_POSITIVITY_*`, `MHD_RADIATION_CHECKPOINT_FALLBACK` | Honoured for CT as for GLM `cube` (trial check, restore, minmod-PLM/HLL retry, subdivision, checkpoint error), at the cost of 6 extra `N^3` face-snapshot arrays. `MHD_RADIATION_POSITIVITY_WAVE_GROWTH_LIMIT` is multiplied by `MHD_GLM_CH_FAC` for CT (so the absolute limit equals GLM's); GLM `ref` has no such protection |
+| Checkpoints | A checkpoint without an `mhd_solver` key is a GLM checkpoint. GLM and CT checkpoints cannot be resumed as one another; CT checkpoints store the face fields (and, with compensation, the face remainders) |
+
+Consequently a CT and a GLM run at equal `cfl` do not take identical steps
+whenever the CFL step, rather than a cosmological or source cap, is the limit.
+See [comparing CT and GLM runs](validation.qmd#sec-ct-vs-glm).
 
 ## Defaults are context-dependent {#sec-defaults}
 

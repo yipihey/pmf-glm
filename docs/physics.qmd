@@ -42,6 +42,122 @@ examples. LLF fallback and positivity handling can change the local numerical
 diffusion and must be monitored. A portable reference integrator and fused cube
 integrator coexist. Shared source is not a substitute for backend parity tests.
 
+## Constrained transport (optional) {#sec-ct}
+
+`mhd_solver = "ct"` replaces the GLM divergence cleaning by face-staggered
+constrained transport [@gardiner2005]; GLM stays the default. The Godunov
+sweeps are shared with GLM: PLM/PPM reconstruction, the Hancock predictor, and
+HLLD/HLL/LLF fluxes on cell-centred conserved variables, with the normal
+magnetic component at each face overwritten by the staggered face value and
+`psi` identically zero. The induction update differs:
+
+1. The Godunov magnetic fluxes on the lower faces give face EMFs, and a
+   cell-centred reference EMF `E = -v x B` is built from the source-updated
+   predicted velocity and the step-start `B`.
+2. Edge EMFs are the Gardiner and Stone CT-contact average of the four adjacent
+   face EMFs, with upwind gradient corrections selected by the sign of the
+   mass flux and anchored on the cell-centred reference EMF.
+3. The face fields `bxf, byf, bzf` advance by the discrete curl of the edge
+   EMFs, so the face divergence is preserved to round-off.
+4. The cell-centred `B` used by every other module (energy, forces, chemistry,
+   radiation, diagnostics) is the average of the two faces.
+
+**Compensated face updates.** With a strong Float32 guide field the per-step
+face increments `dtdx curl(E)` of a weak perturbation are comparable to half an
+ulp of the face value, and plain summation drops them face by face; because the
+dropped parts differ from face to face, the exact face divergence then
+random-walks away from round-off and the perturbation drifts from the Float64
+solution (the `test_ct.jl` guide-field case: components 22 to 35, 198 ulp
+perturbation, 2000 steps, `div_face*dx/Brms` 1.15e-7 initially, 7.5e-6 plain,
+1.5e-7 compensated). When `MHD_RADIATION_MAGNETIC_COMPENSATION=1` the
+radiation-coupled steps (exactly where GLM compensates its cell `B`) therefore
+sum each face with Kahan compensation: the part of an increment that `b + inc`
+cannot represent is kept in a per-face remainder (`rbx, rby, rbz`, three more
+slots of the CT buffer, checkpointed as `ct_residual_1..3`) and added to the
+next increment. The exact sum `stored + remainder` follows the curl update, so
+the divergence of the stored faces stays bounded by the remainders (at most half
+an ulp of each face) instead of growing. The cell-centred `B` remains the plain
+average of the stored faces, and plain `step!` and drag-only steps stay
+uncompensated, as for GLM.
+{{< src "lib/MHDKernels/src/ct.jl" "_ct_faceB_comp_k!" >}}
+
+The scheme is a port of `ct_mhd.jl` from the Solaceonx/GLMMHDTurb sweep-fixes
+(commits `9d20e52` and `7256715`).
+{{< src "lib/MHDKernels/src/ct.jl" "_ct_gs05" >}}
+
+Initial conditions are generated as a cell field. Once all initial-condition and
+import stages are complete, the driver builds divergence-free faces from it once
+with the minimal change of the cell field (projection onto the face-solenoidal
+subspace with the `tan(k dx/2)` symbol), keeps the thermal pressure fixed, and
+logs `CT_INITIAL_FACES cell_b_rel_l2_change`, `magnetic_energy_ratio`, and
+`divb_face_dx_over_brms`. Because the PMF generators make the field solenoidal
+under another discrete symbol (centred `sin 2θ`, or continuum `θ`), this
+changes the field by O((k dx)^2) near the cutoff. The measured rms
+(`brms_measured`) reports the post-projection cell field; the reference-band
+normalization values remain those of the generated field.
+{{< src "lib/MHDKernels/src/ct.jl" "ct_faces_from_cells!" >}}
+
+**Terminal and hybrid drag.** The overdamped paths advance the faces. The cell
+EMF $\mathbf v\times\mathbf B$ is computed exactly as for GLM (cell-centred $\mathbf v$ from
+the Lorentz force and pressure response, cell $\mathbf B$ = face average); each
+edge EMF is the mean of the four cells sharing the edge, and the faces advance by the
+discrete curl of the edge EMFs. The SSPRK2 `terminal_ct_induction!`, the
+pressure-implicit step and the radiation terminal induction keep the GLM stages,
+subcycling, `cfl` and `eta`; the order-2/order-4 dissipation is the Laplacian or
+bilaplacian of every face component with the same stencil, which commutes with
+the face divergence on a periodic grid. After each stage cell $\mathbf B$ is the face
+average and $E$ changes by the magnetic-energy change (as GLM). The first-order
+`terminal` velocity steps and the implicit B diffusion (a Fourier multiplier applied to each
+face component) do the same; the B projection of the terminal paths is skipped because
+the face divergence is already round-off. Face sums are Kahan-compensated through
+`ct.rbx/rby/rbz`, because plain Float32 summation of sub-ulp increments over 1000
+Euler steps raised $\Delta x\,\max|\nabla\cdot B|/B_{rms}$ to 1.6e-5 (1.4e-7 compensated).
+Genuinely cell-wise options are errors for CT: `MHD_TERMINAL_INDUCTION=ssprk2`
+(cell SSPRK2 with a GLM-style projection) and, with
+`MHD_TERMINAL_PRESSURE_IMPLICIT=1`, any induction other than `ct`.
+{{< src "lib/MHDKernels/src/terminal_ct.jl" "terminal_ct_induction!" >}}
+
+**Limits.** CT is periodic-only and implemented on the `ref` integrator only; the
+`cube` integrators and the GLM projection are rejected (terminal and hybrid drag
+are supported, see below). Metal allows 31 buffer arguments per kernel and counts each scalar
+argument as one, so the CT kernel (`step_ref_ct_kernel!`, generated from the same
+body as the GLM `step_ref_kernel!`) takes the CT arrays as one packed buffer
+and the grid/BC integers as one tuple; it runs on Metal. (GLM's `ref` kernel
+still exceeds the limit on Metal, as before CT; GLM runs there use `cube`.)
+CUDA is `NOT_RUN`. CT allocates 21 extra `N^3` arrays (three face fields, 15
+flux/EMF workspace arrays and three face remainders, in one buffer) on top of GLM's 18. From a state at
+rest the face mass fluxes are rounding noise and the upwind choice of the edge
+EMF follows their sign, so CT trajectories on different devices separate at
+first faster than with a definite flow (Metal vs CPU Float32, 32^3 PMF field,
+20 steps: 1.2e-4 relative from rest, 1.3e-6 with a uniform flow). The explicit step is not limited by the
+GLM cleaning speed. `divb_face_dx_over_brms` in `history.tsv` and
+`performance.tsv` is the exact face divergence (empty/`NaN` for GLM); the
+centred `divBdx_over_brms` is a different diagnostic and is not zero for CT.
+
+**Positivity protection of the radiation-coupled step.** GLM protects its `cube`
+radiation step: the trial state is checked (density at least `max(smallr, llf_dmin)`,
+finite state, internal energy at least `pfl/(gamma-1)`, trial wave speed at most
+`positivity_wave_growth_limit * ch`), a rejected trial restores the pre-step state and is
+retried as a complete minmod-PLM/HLL step, and a second rejection either raises
+`RADIATION_CHECKPOINT_CFL_FALLBACK` (checkpoint fallback) or halves the step recursively
+(`positivity_max_subdivisions`). CT has the same protection on `ref`
+({{< src "lib/MHDKernels/src/radiation_coupling.jl" "step_radiation_godunov!" >}}), with
+identical counters (`fallback_steps`, `plm_hll_fallback_steps`, `subdivision_steps`) and
+warnings. Differences from GLM: the face fields and their Kahan remainders are updated in
+place by `ct_update!`, so a snapshot of them (6 extra `N^3` arrays in the radiation
+workspace, `ct_snapshot`: 15% of the 39 state and CT arrays, plus one device copy per
+radiation step) is taken before the trial and restored
+exactly with the cell fields (GLM resets its remainders; CT does not lose them); the
+minmod-PLM/HLL retry passes its reconstruction and Riemann codes to the kernel without changing
+`s.recon`/`s.riemann`; and the internal-energy and finiteness checks run on the stored trial state
+(the `ref` kernel has no inadmissible-cell flag). The GLM `ref` path is deliberately
+unchanged and has no such protection (it is the CPU default, not the production GPU path).
+CT callers must pass a positive `ch` (the wave-speed gate is `growth * ch`; CT dynamics do not use it). Runner: CT passes `ch = smax`, so `MHD_RADIATION_POSITIVITY_WAVE_GROWTH_LIMIT` is multiplied
+by `MHD_GLM_CH_FAC` for CT to reproduce GLM's absolute wave-speed limit.
+Whether the PLM/HLL trial is rejected can differ between GLM and CT in low-beta
+gas, where the thermal energy is a small difference of large energies and the schemes
+treat `B` differently ([comparing CT and GLM runs](validation.qmd#sec-ct-vs-glm)).
+
 ## Magnetic-force decomposition {#sec-force-split}
 
 The centered Maxwell-stress diagnostic uses

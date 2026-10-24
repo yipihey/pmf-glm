@@ -1,10 +1,13 @@
 #!/usr/bin/env julia
 # End-to-end controlled checks. Output is new simulation evidence, not a PMF campaign.
+# Usage: validate_relative_velocities.jl [OUTPUT_DIR [f32|f64 [glm|ct]]]  (third argument: mhd_solver)
 using Test, Statistics, Serialization, Printf, TOML, SHA
 import PMFGLM
 ENV["MHD_BACKEND"]="cpu"
 ENV["MHD_PRECISION"]=length(ARGS)>=2 ? ARGS[2] : "f32"
 include(joinpath(@__DIR__,"..","src","production","runner.jl"))
+const mhd_solver = lowercase(length(ARGS)>=3 ? ARGS[3] : "glm")
+mhd_solver in ("glm","ct") || error("third argument (mhd_solver) must be glm or ct")
 const output_root=abspath(isempty(ARGS) ? joinpath(@__DIR__,"..","results","relative-velocity-validation") : ARGS[1])
 isdir(output_root) && !isempty(readdir(output_root)) && error("choose an empty output directory")
 mkpath(output_root)
@@ -51,7 +54,7 @@ function full_run(tag; rate=0., mode="radiation", maxexp=0.02, gravity=false,
       "MHD_PRINT_EVERY"=>"2000","MHD_CYCLE_PRINT_EVERY"=>"2000",
       "MHD_INITIAL_PK"=>"0","MHD_FINAL_DIAG"=>"0",
       "MHD_CHECKPOINT_PATH"=>joinpath(out,"final.jls"),
-      "MHD_CHECKPOINT_FINAL"=>"1","MHD_CHECKPOINT_RESUME"=>"0")
+      "MHD_CHECKPOINT_FINAL"=>"1","MHD_CHECKPOINT_RESUME"=>"0","MHD_SOLVER"=>mhd_solver)
     # Match the facade: unrelated shell MHD_* options must not alter evidence.
     clean = Dict{String,Union{String,Nothing}}(k=>nothing for k in keys(ENV) if startswith(k,"MHD_"))
     merge!(clean,env)
@@ -77,7 +80,7 @@ function full_run(tag; rate=0., mode="radiation", maxexp=0.02, gravity=false,
         TOML.print(io,Dict("source_fingerprint_sha256"=>PMFGLM.source_fingerprint(),
             "oracle_sha256"=>bytes2hex(sha256(read(joinpath(@__DIR__,"..","tools","reference","homogeneous_velocities.py")))),
             "julia_version"=>string(VERSION),"threads"=>Threads.nthreads(),
-            "backend"=>string(BACKEND_NAME),"precision"=>string(T),
+            "backend"=>string(BACKEND_NAME),"precision"=>string(T),"mhd_solver"=>mhd_solver,
             "target_z"=>zend,"actual_z"=>a_to_z(runtime.a),
             "scope"=>"controlled velocity transport; fixed ionization; chemistry off"))
     end

@@ -327,6 +327,25 @@ riemann_code(s::Symbol) = s === :hlld ? RSOLVE_HLLD : s === :hll ? RSOLVE_HLL :
         uself ? llf_x(Lc,Rc,γ,ch,fbn,fpsi) : hlld_x(Lc,Rc,γ,ch,bns,fbn,fpsi)
     rot_flux_from(f,dir)
 end
+# Constrained-transport Riemann dispatch (no GLM): the normal field is the single
+# face-centred value shared by both states (the caller overwrites L[bn] and R[bn] with
+# it), so b_n* = that value, the normal-field and ψ fluxes are identically zero, and the
+# LLF fallback speed carries no cleaning speed ch (passed as zero). The transverse
+# magnetic fluxes (f[6..8] excluding the normal slot) are the face EMFs used by the CT
+# edge-EMF average. Same HLLD/HLL/LLF + llf_dmin/llf_pmin switching as `riemann`.
+@fastmath @inline function riemann_ct(Lq::NTuple{9,T},Rq::NTuple{9,T},dir::Int,
+        γ::T,smallr::T,pfl::T,llf_dmin::T,llf_pmin::T,rsol::Val{RS}) where {T,RS}
+    L0=rot_to(Lq,dir); R0=rot_to(Rq,dir)
+    L=(max(L0[1],smallr),L0[2],L0[3],L0[4],max(L0[5],pfl),L0[6],L0[7],L0[8],zero(T))
+    R=(max(R0[1],smallr),R0[2],R0[3],R0[4],max(R0[5],pfl),L0[6],R0[7],R0[8],zero(T))
+    bns=L[6]
+    z=zero(T)
+    uself=(llf_dmin>z && min(L[1],R[1])<llf_dmin)||(llf_pmin>z && min(L[5],R[5])<llf_pmin)
+    f = RS == RSOLVE_LLF ? llf_x(L,R,γ,z,z,z) :
+        RS == RSOLVE_HLL ? hll_x(L,R,γ,z,bns,z,z) :
+        uself ? llf_x(L,R,γ,z,z,z) : hlld_x(L,R,γ,z,bns,z,z)
+    rot_flux_from(f,dir)
+end
 @inline _compensated_update!(residual,idx,x::T,dx::T,
                              ::Val{false}) where {T} = x+dx
 

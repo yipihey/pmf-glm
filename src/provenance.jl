@@ -20,13 +20,19 @@ end
 function _run_metadata(config, env; status="RUNNING")
     project = Base.active_project()
     manifest = project === nothing ? "" : joinpath(dirname(project),"Manifest.toml")
-    Dict("schema_version"=>1,"status"=>status,"created_utc"=>string(now(UTC)),
+    solver = lowercase(get(env,"MHD_SOLVER","glm"))
+    ctnote = solver == "ct" ? Dict{String,Any}(
+        "ct_step_glm_limited"=>false,"ct_glm_project_every"=>0,
+        "ct_note"=>"CT dt is the plain CFL dt (not shrunk by ch=glm_ch_fac*smax) and B is never " *
+                   "projected; GLM radiation runs project every cycle. Expected difference at equal CFL.") :
+        Dict{String,Any}()
+    merge(Dict("schema_version"=>1,"status"=>status,"mhd_solver"=>solver,"created_utc"=>string(now(UTC)),
         "machine"=>gethostname(),"kernel"=>string(Sys.KERNEL),"architecture"=>string(Sys.ARCH),
         "julia_version"=>string(VERSION),"julia_threads"=>Threads.nthreads(),
         "source_fingerprint_sha256"=>source_fingerprint(),
         "active_project"=>something(project,""),
         "manifest_sha256"=>isfile(manifest) ? bytes2hex(sha256(read(manifest))) : "unresolved",
-        "configuration"=>config.settings,"environment"=>env)
+        "configuration"=>config.settings,"environment"=>env),ctnote)
 end
 
 function _completion_status(log::AbstractString,env)
@@ -36,6 +42,15 @@ function _completion_status(log::AbstractString,env)
     z = parse(Float64,last(matches).captures[1])
     target = parse(Float64,get(env,"MHD_ZEND","20"))
     z <= target + 1e-6*max(1,target) ? "COMPLETED" : "STOPPED_AT_LIMIT"
+end
+
+"CT_INITIAL_FACES numbers from the first run segment of `run.log` (empty if absent)."
+function _ct_initial_faces(log::AbstractString)
+    m = match(r"CT_INITIAL_FACES cell_b_rel_l2_change=([^ ]+) magnetic_energy_ratio=([^ ]+) divb_face_dx_over_brms=([^ ]+)",log)
+    m === nothing && return Dict{String,Any}()
+    Dict{String,Any}("ct_initial_cell_b_rel_l2_change"=>parse(Float64,m.captures[1]),
+        "ct_initial_magnetic_energy_ratio"=>parse(Float64,m.captures[2]),
+        "ct_initial_divb_face_dx_over_brms"=>parse(Float64,m.captures[3]))
 end
 
 const RESTART_CONTROL_OPTIONS = Set([
@@ -103,7 +118,9 @@ function run_simulation(c::RunConfig; output_dir::AbstractString, dry_run::Bool=
             process = run(pipeline(ignorestatus(cmd);stdout=io,stderr=io))
             success(process) || error("production process exited with status $(process.exitcode); see $(joinpath(out,"run.log"))")
         end
-        metadata["status"] = _completion_status(read(joinpath(out,"run.log"),String),env)
+        log = read(joinpath(out,"run.log"),String)
+        metadata["status"] = _completion_status(log,env)
+        metadata["mhd_solver"] == "ct" && merge!(metadata,_ct_initial_faces(log))
     catch error
         metadata["status"] = "FAILED"
         metadata["error"] = sprint(showerror,error)

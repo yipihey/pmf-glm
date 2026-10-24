@@ -125,7 +125,7 @@ def plot_history(rows: list[dict], output: Path) -> None:
         (("xHII_mean", "xe_total_mean"), "Abundance per H nucleus"),
         (("fH2_mean", "xHeII_mean"), "Abundance (production convention)"),
         (("temperature_mean",), "Temperature [K]"),
-        (("divBdx_over_brms",), "divB dx / B RMS"),
+        (("divBdx_over_brms", "divb_face_dx_over_brms"), "divB dx / B RMS (centred; CT face)"),
     )
     for axis, (fields, ylabel) in zip(axes.flat, groups):
         for field in fields:
@@ -276,7 +276,11 @@ def analyze(output: Path, *, history: Path | None = None, spectra: Path | None =
                    "PDF is volume-weighted per log10(rho), not per rho; finite range may omit probability.",
                    "Initial measured=0 records are retained."]}
     if run is not None:
-        summary["run"] = dict(path=str(run.resolve()), status=run_metadata.get("status", "UNKNOWN"))
+        summary["run"] = dict(path=str(run.resolve()), status=run_metadata.get("status", "UNKNOWN"),
+                              mhd_solver=run_metadata.get("mhd_solver", "glm"))
+        if run_metadata.get("mhd_solver") == "ct":
+            summary["notes"].append("mhd_solver=ct: divb_face_dx_over_brms is the exact face divergence (round-off level); "
+                                    "divBdx_over_brms is the centred cell-field diagnostic and is not constrained to zero.")
         if (run / "metadata.toml").is_file():
             summary["inputs"]["metadata"] = dict(path=str((run / "metadata.toml").resolve()),
                 sha256=hashlib.sha256((run / "metadata.toml").read_bytes()).hexdigest())

@@ -255,7 +255,9 @@ function _install_pmf_field!(s::MHDState{T}, Bx::Array{Float32,3}, By::Array{Flo
     copyto!(s.U[6], Bxv); copyto!(s.U[7], Byv); copyto!(s.U[8], Bzv)
     fill!(s.U[9], zero(T))
     KA.synchronize(s.be)
-    return nothing
+    # CT states need a discretely divergence-free FACE field: derive it from the cell
+    # field just installed (spectral half-cell shift + discrete projection).
+    return uses_ct(s) ? ct_faces_from_cells!(s) : nothing
 end
 
 function _pmf_fft_threads()
@@ -634,8 +636,9 @@ function init_pmf_batchelor!(s::MHDState{T}; brms = nothing, b0_pG = nothing,
                                             realization_box=realization_box,
                                             minimum_cells_per_wavelength=minimum_cells_per_wavelength,
                                             invariant_axis=invariant_axis)
-    _install_pmf_field!(s, Bx, By, Bz; rho0=rho0, p0=p0)
-    return merge(stats, (rho0=Float64(rho0), p0=Float64(p0), Bunit_pG=Float64(Bunit_pG)))
+    ctinfo = _install_pmf_field!(s, Bx, By, Bz; rho0=rho0, p0=p0)
+    out = merge(stats, (rho0=Float64(rho0), p0=Float64(p0), Bunit_pG=Float64(Bunit_pG)))
+    return ctinfo === nothing ? out : merge(out, (ct_faces=ctinfo,))
 end
 
 """
@@ -699,8 +702,9 @@ function init_pmf_batchelor_tiled!(s::MHDState{T}; tile_box::Real,
     Bx = nt == n ? Bxt : _periodic_tile_field(Bxt, s.dims)
     By = nt == n ? Byt : _periodic_tile_field(Byt, s.dims)
     Bz = nt == n ? Bzt : _periodic_tile_field(Bzt, s.dims)
-    _install_pmf_field!(s, Bx, By, Bz; rho0=rho0, p0=p0)
-    return merge(stats, (rho0=Float64(rho0), p0=Float64(p0),
-                         Bunit_pG=Float64(Bunit_pG), full_box=L,
-                         tile_box=Lt, tile_n=nt))
+    ctinfo = _install_pmf_field!(s, Bx, By, Bz; rho0=rho0, p0=p0)
+    out = merge(stats, (rho0=Float64(rho0), p0=Float64(p0),
+                        Bunit_pG=Float64(Bunit_pG), full_box=L,
+                        tile_box=Lt, tile_n=nt))
+    return ctinfo === nothing ? out : merge(out, (ct_faces=ctinfo,))
 end

@@ -97,6 +97,83 @@ cells at N64 and eight cells at N128. Review physical wavelength support,
 projection cadence, and identical output epochs as grids change. Inspect `COMPLETED`
 versus `STOPPED_AT_LIMIT` for every case before comparing histories.
 
+## Comparing CT and GLM runs {#sec-ct-vs-glm}
+
+`examples/cosmology-smoke-ct.toml` is the CT counterpart of
+`examples/cosmology-smoke.toml`; to compare any case, keep the TOML identical
+except `run.mhd_solver`, and give each run a new output directory. Expected,
+documented differences are not discrepancies to fit away:
+
+- The default GLM radiation path projects `B` every cycle and limits the
+  explicit step by `ch = glm_ch_fac * smax`. CT does neither, so at equal `cfl`
+  its explicit step is the plain CFL step. Whether this matters depends on
+  whether the CFL step or a cosmological/source cap sets `dt`; the smoke
+  problem is capped by `max_dln_a`, where both solvers take identical steps.
+  `metadata.toml` records `ct_step_glm_limited = false` and `ct_glm_project_every = 0`.
+- CT builds its faces from the initial cell field, which changes that field by
+  O((k dx)^2) near the cutoff. Report the `CT_INITIAL_FACES` numbers
+  (`metadata.toml: ct_initial_*`). Using `curl_symbol = "continuum"` reduces the
+  change for Batchelor fields. The first history row of a CT run therefore
+  differs from GLM's at the level of that change, not at Float32 round-off.
+- Compare actual common redshifts from the `z` columns, not cycle numbers, and
+  compare `divb_face_dx_over_brms` (CT, Float32 round-off) with the centred
+  `divBdx_over_brms` (GLM). The centred value of a CT run is not constrained to zero.
+- Every workflow takes the solver the same way. `run_pmf.jl` and `run_suite.jl`
+  accept `--mhd-solver=glm|ct` (or set `run.mhd_solver` per suite case);
+  `validate_production.jl --mhd-solver=ct --output=DIR` runs the endpoint/restart
+  gate for CT (CT requires `--output`, so tracked `docs/data` evidence is not
+  touched; its record carries `mhd_solver` and the final centred and face
+  divergence); `validate_relative_velocities.jl OUT f32 ct` runs the controlled
+  velocity checks with CT. `scripts/validate.jl` runs the solver-agnostic Julia test
+  suite, which contains the CT regressions, so it has no solver flag.
+- The remaining agreement criteria are those of the
+  [science matrix](#sec-science-matrix): define tolerances before measuring, and
+  refine timestep and grid separately for each solver. CT runs on the CPU
+  and Metal backends; CUDA is `NOT_RUN`.
+
+### Matched-pair workflow {#sec-ct-vs-glm-workflow}
+
+`examples/ct-vs-glm-suite.toml` defines the matched pair (identical except
+`run.mhd_solver`) of the smallest cosmology case:
+
+```sh
+julia --project=. -t auto scripts/run_suite.jl examples/ct-vs-glm-suite.toml          # dry run
+julia --project=. -t auto scripts/run_suite.jl examples/ct-vs-glm-suite.toml --execute
+uv run pmf-analyze results/ct-vs-glm/glm      # and .../ct
+uv run pmf-compare-runs results/ct-vs-glm/glm results/ct-vs-glm/ct
+```
+
+`pmf-compare-runs RUN_A RUN_B` pairs `history.tsv` rows and `spectra.tsv` epochs at
+common redshifts (`--z-tol`, absolute, default 1e-3; never by cycle), and reports
+the relative difference `(B - A)/A` of every history column and of each spectrum
+field, plus both divergence diagnostics listed separately (never differenced).
+Reference values below `--floor` (default 1e-8) times the column/field-epoch
+maximum are skipped, not reported as zero: without that floor round-off-level
+high-k power at 1e-16 dominates the maxima. It writes `history_differences.tsv`,
+`spectra_differences.tsv`, and `run_comparison.json` and states each run's solver
+and status from `metadata.toml`. It is a difference report, not a gate;
+tolerances are chosen per the science matrix before measuring.
+
+### Terminal and hybrid CT vs GLM {#sec-ct-terminal-vs-glm}
+
+`test/inherited/test_terminal_ct_equivalence.jl` compares the terminal paths on an ABC-type
+field (a = 0.08, rho = 1 + 0.02 sin(x+y), `gamma_drag = 4`, T = 1; periodic unit box;
+signal S = ||B_glm(T) - B(0)||). Tolerances were fixed before the CT-GLM numbers
+were computed: d = ||B_ct - B_glm||/S below 0.20 (N=16) and 0.06 (N=32), a ratio d16/d32
+above 3, CT face divergence below 1e-12 (Float64) / 1e-5 (Float32) in
+units of `dx/Brms` at every step, total-energy bookkeeping at round-off, and Float32/Float64 CT
+agreement below 1e-3 S. The scheme difference is the edge average of the EMF plus
+the compact face curl versus the centred cell curl, an O((k dx)^2) symbol
+difference, hence the 4x fall per doubling. Measured: induction (order 4)
+2.74e-2 / 7.43e-3 (ratio 3.69), order 2 2.70e-2 / 7.36e-3, pressure step 2.01e-2 / 5.27e-3,
+radiation terminal 1.70e-2 / 4.30e-3, first-order velocity steps 1.80e-2 / 4.59e-3; CT
+divergence 2e-15 (Float64), 1.4e-6 (Float32 induction), 1.4e-7 (Float32 compensated Euler).
+The hybrid terminal -> handoff -> full MHD comparison satisfies its tolerances (2.6e-2 at N=16
+and N=32) but **not** the pre-declared decrease with N (ratio 1.02, `@test_broken`): the N=32 GLM
+Godunov run amplifies a 1e-6 relative momentum perturbation to |dB| = 1.8e-4 (CT: 5.0e-6),
+so that difference is dominated by noise growth in the GLM reference. The implicit B
+diffusion has no CPU solver and is checked on Metal only.
+
 ## Float32 and thermal floors {#sec-thermal-floors}
 
 The total-energy formulation reconstructs thermal energy by subtracting kinetic

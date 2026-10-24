@@ -56,6 +56,22 @@ function _restore_pmf_checkpoint!(path::AbstractString, expected_config, arrays;
             error("unsupported PMF checkpoint format: $path")
         stored_config = deserialize(io)
         runtime = deserialize(io)
+        if haskey(expected_config, :mhd_solver)
+            # A checkpoint written before the solver option existed is a GLM checkpoint.
+            # Never let the legacy-compatibility path resume it (or a GLM one) as CT, or
+            # vice versa: CT carries face fields that a GLM checkpoint cannot provide.
+            stored_solver = haskey(stored_config, :mhd_solver) ?
+                            Symbol(stored_config.mhd_solver) : :glm
+            expected_solver = Symbol(expected_config.mhd_solver)
+            stored_solver == expected_solver || error(
+                "PMF checkpoint mhd_solver mismatch: checkpoint was written by " *
+                "mhd_solver=$(stored_solver)" *
+                (haskey(stored_config, :mhd_solver) ? "" : " (no mhd_solver key: legacy GLM)") *
+                " but this run requests mhd_solver=$(expected_solver); resume with the same " *
+                "solver or start a new run")
+            haskey(stored_config, :mhd_solver) ||
+                (stored_config = merge(stored_config, (mhd_solver=:glm,)))
+        end
         if !isequal(stored_config, expected_config)
             stored_keys = keys(stored_config)
             compatible_legacy = all(k -> haskey(expected_config, k) &&
@@ -1644,13 +1660,55 @@ end
     end
 end
 
+# CT: the first-order velocity-step paths below also write cell-centred B (centred curl of
+# v x B). For mhd_solver=ct the cell v x B is computed from the same velocity into the CT
+# workspace before the cell kernel, the faces then advance by the curl of the edge-averaged
+# EMF, and cell B / total energy are re-derived from the faces after the kernel.
+@kernel function _terminal_ct_cell_emf_k!(ecx, ecy, ecz,
+                                          @Const(rho), @Const(mx), @Const(my), @Const(mz), @Const(E),
+                                          @Const(Bx), @Const(By), @Const(Bz),
+                                          N::Int, inv2dx, gamma_code, gamma_gas, smallr, smallE, vcap)
+    c = @index(Global)
+    @inbounds begin
+        i = (c - 1) % N + 1
+        j = ((c - 1) ÷ N) % N + 1
+        k = (c - 1) ÷ (N * N) + 1
+        x, y, z = _vxb_at(rho, mx, my, mz, E, Bx, By, Bz, i, j, k, N, inv2dx,
+                          gamma_code, gamma_gas, smallr, smallE, vcap)
+        ecx[c] = x; ecy[c] = y; ecz[c] = z
+    end
+end
+
+@kernel function _terminal_ct_cell_emf_cached_k!(ecx, ecy, ecz, @Const(tvx), @Const(tvy), @Const(tvz),
+                                                 @Const(Bx), @Const(By), @Const(Bz),
+                                                 N::Int, vsmooth)
+    c = @index(Global)
+    @inbounds begin
+        i = (c - 1) % N + 1
+        j = ((c - 1) ÷ N) % N + 1
+        k = (c - 1) ÷ (N * N) + 1
+        x, y, z = _vxb_cached_smooth_at(tvx, tvy, tvz, Bx, By, Bz, i, j, k, N, vsmooth)
+        ecx[c] = x; ecy[c] = y; ecz[c] = z
+    end
+end
+
 function _terminal_velocity_step!(be, s, dt::Real, gamma_code::Real, vcap::Real)
+    if MHDKernels.uses_ct(s)
+        ct = s.ct
+        _terminal_ct_cell_emf_k!(be)(ct.ecx, ct.ecy, ct.ecz, s.U[1], s.U[2], s.U[3], s.U[4],
+                                     s.U[5], s.U[6], s.U[7], s.U[8],
+                                     Int(s.dims[1]), T(1) / (T(2) * s.dx),
+                                     T(gamma_code), T(s.γ), T(s.smallr), T(1e-30), T(vcap);
+                                     ndrange=length(s.U[1]))
+        KA.synchronize(be)
+    end
     _terminal_velocity_step_k!(be)(s.scratch..., s.U...,
                                    Int(s.dims[1]), T(dt), T(1) / (T(2) * s.dx),
                                    T(gamma_code), T(s.γ), T(s.smallr), T(1e-30), T(vcap);
                                    ndrange=length(s.U[1]))
     KA.synchronize(be)
     s.U, s.scratch = s.scratch, s.U
+    MHDKernels.uses_ct(s) && MHDKernels.terminal_ct_euler_from_cell_emf!(s, dt)
     return nothing
 end
 
@@ -1698,6 +1756,12 @@ function _terminal_pressure_implicit_step!(be, s, dt::Real, gamma_code::Real,
         finalize_s = @elapsed _terminal_velocity_step!(be, s, dt, gamma_code, vcap)
         return (nsub=1, force_s, pressure_fft_s, finalize_s, induction_s, projection_s)
     end
+    if MHDKernels.uses_ct(s) && induction !== :ct
+        error("MHD_SOLVER=ct with MHD_TERMINAL_PRESSURE_IMPLICIT requires " *
+              "MHD_TERMINAL_INDUCTION=ct (the face-staggered SSPRK2 induction); " *
+              "terminal_induction=$induction advances cell-centred B with a centred curl " *
+              "(and ssprk2 relies on a GLM-style B projection), which cannot keep CT faces consistent")
+    end
     if induction === :ct
         result = MHDKernels.terminal_pressure_ct_step!(_terminal_pressure_exponential_solve!, s, dt;
             gamma_drag=gamma_code, pressure_coeff=pressure_coeff,
@@ -1705,7 +1769,9 @@ function _terminal_pressure_implicit_step!(be, s, dt::Real, gamma_code::Real,
             induction_dissipation=induction_dissipation,
             induction_dissipation_order=induction_dissipation_order,
             vcap=vcap, max_induction_subcycles=max_induction_subcycles)
-        if project_b
+        # CT: the face update keeps div b at round-off, so the cell-centred B projection
+        # (which would overwrite the face average) is skipped.
+        if project_b && !MHDKernels.uses_ct(s)
             projection_s = @elapsed _project_mhd_b!(be, s)
             return merge(result, (; projection_s))
         end
@@ -1837,12 +1903,20 @@ function _terminal_velocity_step_cached!(be, s, dt::Real, gamma_code::Real, vcap
                                     T(gamma_code), T(s.γ), T(s.smallr), T(1e-30), T(vcap);
                                     ndrange=length(s.U[1]))
     KA.synchronize(be)
+    if MHDKernels.uses_ct(s)
+        ct = s.ct
+        _terminal_ct_cell_emf_cached_k!(be)(ct.ecx, ct.ecy, ct.ecz, tvx, tvy, tvz,
+                                            s.U[6], s.U[7], s.U[8], Int(s.dims[1]), T(vsmooth);
+                                            ndrange=length(s.U[1]))
+        KA.synchronize(be)
+    end
     _terminal_velocity_update_cached_k!(be)(s.scratch..., s.U..., tvx, tvy, tvz,
                                             Int(s.dims[1]), T(dt), T(1) / (T(2) * s.dx),
                                             T(s.γ), T(s.smallr), T(1e-30), T(vsmooth);
                                             ndrange=length(s.U[1]))
     KA.synchronize(be)
     s.U, s.scratch = s.scratch, s.U
+    MHDKernels.uses_ct(s) && MHDKernels.terminal_ct_euler_from_cell_emf!(s, dt)
     return nothing
 end
 
@@ -1938,6 +2012,25 @@ function _terminal_implicit_diffuse_B!(s, coeff_cells2::Real)
         return nothing
     end
     N = Int(s.dims[1])
+    if MHDKernels.uses_ct(s)
+        # The implicit diffusion is a translation-invariant Fourier multiplier, so applying it
+        # to every FACE component commutes with the face divergence (div b stays at
+        # round-off). Cell B is re-derived as the face average; as for GLM, E is untouched.
+        ct = s.ct
+        # The faces are views into one packed buffer; the device FFT wrappers are not
+        # guaranteed to honour view offsets (Metal gave a corrupted field), so stage each
+        # face through two full scratch arrays.
+        for face in (ct.bxf, ct.byf, ct.bzf)
+            copyto!(s.scratch[6], face)
+            PoissonKernels.rfft_implicit_diffuse!(reshape(s.scratch[7], N, N, N),
+                                                  reshape(s.scratch[6], N, N, N); coeff_cells2=coeff)
+            copyto!(face, s.scratch[7])
+        end
+        MHDKernels._ct_bcc_k!(s.be, 256)(s.U[6], s.U[7], s.U[8], ct.bxf, ct.byf, ct.bzf,
+                                         N, N, N; ndrange=length(s.U[1]))
+        KA.synchronize(s.be)
+        return nothing
+    end
     for v in 6:8
         dst = reshape(s.scratch[v], N, N, N)
         src = reshape(s.U[v], N, N, N)
@@ -2616,6 +2709,12 @@ function _device_divb_norm!(be, s, scratch, br::Float64)
                                    ndrange=n)
     KA.synchronize(be)
     return Float64(maximum(scratch)) * Float64(s.dx) / max(br, eps(Float64))
+end
+
+"Face-divergence diagnostic max|div b_face| dx / Brms for CT states; NaN for GLM states."
+function _device_divb_face_norm(s, br::Float64)
+    MHDKernels.uses_ct(s) || return NaN
+    return MHDKernels.max_divb_face(s) * Float64(s.dx) / max(br, eps(Float64))
 end
 
 function _device_component_rms!(be, scratch, src)
@@ -3957,7 +4056,7 @@ end
 function _write_history!(path, cycle, measured, a, br, divn, δb, δdm;
                          btrans=NaN, btrans0=NaN, delta2k=NaN,
                          thermalstats=(NaN, NaN, NaN, NaN, NaN, NaN),
-                         temperaturestats=(NaN, NaN, NaN))
+                         temperaturestats=(NaN, NaN, NaN), divb_face=NaN)
     isempty(path) && return
     exists = isfile(path)
     mkpath(dirname(path))
@@ -3973,18 +4072,18 @@ function _write_history!(path, cycle, measured, a, br, divn, δb, δdm;
                                     "p_mean","p_min","p_max",
                                     "eint_mean","eint_min","eint_max",
                                     "temperature_mean","temperature_min",
-                                    "temperature_max"), '\t'))
+                                    "temperature_max","divb_face_dx_over_brms"), '\t'))
         println(io, join((cycle, measured, a_to_z(a), a, br, divn, δb, δdm,
                           ntuple(_ -> NaN, 12)...,
                           btrans, btrans / btrans0, delta2k,
-                          thermalstats..., temperaturestats...), '\t'))
+                          thermalstats..., temperaturestats..., divb_face), '\t'))
     end
 end
 
 function _write_history!(path, cycle, measured, a, br, divn, δb, δdm, chemstats;
                          btrans=NaN, btrans0=NaN, delta2k=NaN,
                          thermalstats=(NaN, NaN, NaN, NaN, NaN, NaN),
-                         temperaturestats=(NaN, NaN, NaN))
+                         temperaturestats=(NaN, NaN, NaN), divb_face=NaN)
     isempty(path) && return
     exists = isfile(path)
     mkpath(dirname(path))
@@ -4000,10 +4099,10 @@ function _write_history!(path, cycle, measured, a, br, divn, δb, δdm, chemstat
                                     "p_mean","p_min","p_max",
                                     "eint_mean","eint_min","eint_max",
                                     "temperature_mean","temperature_min",
-                                    "temperature_max"), '\t'))
+                                    "temperature_max","divb_face_dx_over_brms"), '\t'))
         println(io, join((cycle, measured, a_to_z(a), a, br, divn, δb, δdm,
                           chemstats..., btrans, btrans / btrans0, delta2k,
-                          thermalstats..., temperaturestats...), '\t'))
+                          thermalstats..., temperaturestats..., divb_face), '\t'))
     end
 end
 
@@ -4254,6 +4353,7 @@ function _emit_diagnostics!(; be_p, s, ρdm, scratch, px, py, pz, vx, vy, vz,
     end
     br = _device_brms!(be_p, s, scratch)
     divn = _device_divb_norm!(be_p, s, scratch, br)
+    divb_face = _device_divb_face_norm(s, br)
     gas_delta=radiation_workspace === nothing ? nothing :
               radiation_workspace.density_perturbation
     dm_mean = lattice_displacements ? zero(T) : one(T)
@@ -4283,7 +4383,7 @@ function _emit_diagnostics!(; be_p, s, ρdm, scratch, px, py, pz, vx, vy, vz,
     _write_history!(history_path, cycle, measured, a, br, divn, δb, δdm, chemstats;
                     btrans=btrans, btrans0=btrans0, delta2k=delta2k,
                     thermalstats=thermalstats,
-                    temperaturestats=temperaturestats)
+                    temperaturestats=temperaturestats, divb_face=divb_face)
 
     photon_real_ready = false
     if !isempty(mode_history_path)
@@ -4813,9 +4913,34 @@ function main()
         (riemann = Symbol(lowercase(debug_riemann_override)))
     glm_ch_fac = parse(Float64, get(ENV, "MHD_GLM_CH_FAC", "2.0"))
     glm_cr = parse(Float64, get(ENV, "MHD_GLM_CR", "1.0"))
+    mhd_solver = Symbol(lowercase(strip(get(ENV, "MHD_SOLVER", "glm"))))
+    mhd_solver in (:glm, :ct) ||
+        error("MHD_SOLVER must be glm or ct; got $mhd_solver")
+    use_ct = mhd_solver === :ct
+    if use_ct
+        # Constrained transport keeps B on faces. Every path below that writes
+        # cell-centred B during the evolution is unreachable for CT or rejected here.
+        # Terminal/hybrid: every terminal B writer has a face-staggered CT counterpart; the
+        # genuinely cell-wise options are rejected here.
+        if drag_dt_mode in (:terminal, :hybrid)
+            terminal_pressure_implicit && terminal_induction !== :ct && error(
+                "MHD_SOLVER=ct with MHD_TERMINAL_PRESSURE_IMPLICIT=1 requires " *
+                "MHD_TERMINAL_INDUCTION=ct (centered/ssprk2 advance cell-centred B)")
+            terminal_induction === :ssprk2 && error(
+                "MHD_SOLVER=ct does not support MHD_TERMINAL_INDUCTION=ssprk2 (cell-centred " *
+                "SSPRK2 with a GLM-style B projection); use ct")
+        end
+        haskey(ENV, "MHD_GLM_PROJECT_EVERY") &&
+            parse(Int, ENV["MHD_GLM_PROJECT_EVERY"]) > 0 && error(
+            "MHD_SOLVER=ct does not use GLM B projection: MHD_GLM_PROJECT_EVERY=" *
+            "$(ENV["MHD_GLM_PROJECT_EVERY"]) would overwrite cell-centred B; leave it unset " *
+            "(CT default 0, including the radiation mode where GLM projects every cycle)")
+    end
     glm_project_every = parse(Int, get(ENV, "MHD_GLM_PROJECT_EVERY",
-        drag_dt_mode === :radiation ? "1" : "0"))
+        use_ct ? "0" : (drag_dt_mode === :radiation ? "1" : "0")))
     glm_project_every >= 0 || error("MHD_GLM_PROJECT_EVERY must be non-negative")
+    use_ct && glm_project_every != 0 &&
+        error("MHD_SOLVER=ct requires MHD_GLM_PROJECT_EVERY=0")
     fb = T(parse(Float64, get(ENV, "MHD_FB", "0.17037")))
     fdm = one(T) - fb
     gravity = parse(Bool, get(ENV, "MHD_GRAVITY", "true"))
@@ -5105,11 +5230,14 @@ function main()
     frame_hostrho = isempty(frame_dir) ? nothing : Array{Float32}(undef, N, N, N)
     frame_hostslice = isempty(frame_dir) ? nothing : Array{Float32}(undef, N, N)
     frame_hostproj = isempty(frame_dir) ? nothing : Array{Float32}(undef, N, N)
-    default_mhd_integrator = BACKEND_NAME === :cpu ? "ref" : "cube"
+    default_mhd_integrator = BACKEND_NAME === :cpu || use_ct ? "ref" : "cube"
     mhd_integrator = Symbol(lowercase(get(ENV, "MHD_INTEGRATOR",
                                               default_mhd_integrator)))
     mhd_integrator in (:ref, :cube) ||
         error("MHD_INTEGRATOR must be ref or cube; got $mhd_integrator")
+    use_ct && mhd_integrator === :cube && error(
+        "MHD_SOLVER=ct requires MHD_INTEGRATOR=ref (the default for CT on every backend); " *
+        "the cube integrators are GLM-only")
     if BACKEND_NAME === :metal && mhd_integrator === :cube
         f16max = Float64(floatmax(Float16))
         p0 < f16max || error(
@@ -5119,12 +5247,21 @@ function main()
             "MHD Brms=$(brms) leaves insufficient Float16 staging headroom; " *
             "increase MHD_CHEM_VUNIT")
     end
+    # CT runs ch = smax (so dt is not GLM-limited), GLM runs ch = glm_ch_fac*smax. The radiation
+    # positivity wave-speed limit is `growth * ch`; for CT scale the growth by glm_ch_fac so the
+    # ABSOLUTE limit (growth * glm_ch_fac * smax) is the same one GLM applies.
+    radiation_positivity_wave_growth_eff = radiation_positivity_wave_growth_limit *
+        (use_ct ? glm_ch_fac : 1.0)
+    radiation_positivity_wave_growth_eff > 1 || error(
+        "MHD_RADIATION_POSITIVITY_WAVE_GROWTH_LIMIT * MHD_GLM_CH_FAC must exceed one " *
+        "for MHD_SOLVER=ct (got $(radiation_positivity_wave_growth_eff))")
     drag_dt_mode in (:godunov,:radiation) && mhd_integrator === :cube &&
         any(x -> !iszero(x), (drag_vx0, drag_vy0, drag_vz0)) &&
         error("Metal/CUDA source-aware Godunov drag is specialized for the CMB frame; set MHD_DRAG_VX0/VY0/VZ0=0")
     ncells = N^3
-    _log_line(@sprintf("CONFIG backend=%s N=%d ncells=%.3fM zrun=%s cosmology=(h=%.6g Om=%.6g OL=%.6g Or=%.6g) chem=%s chem_coupling=%s chem_expansion=%s rate_tables=%s gravity=%s gas_kick=%s source=%s phi_interp=%s midpoint_source=%s grav1buf=%s fft=%s particle_wrap=%s lattice_displacements=%s",
-                       String(BACKEND_NAME), N, ncells/1e6,
+    use_ct && _log_line(@sprintf("CT_SOLVER mhd_solver=ct integrator=ref glm_ch_limited_dt=false glm_project_every=0 note=\"CT step is not GLM-limited: dt is the plain CFL dt (GLM scales it by smax/max(smax,ch_fac*smax)); expected difference vs GLM at equal CFL\""))
+    _log_line(@sprintf("CONFIG mhd_solver=%s backend=%s N=%d ncells=%.3fM zrun=%s cosmology=(h=%.6g Om=%.6g OL=%.6g Or=%.6g) chem=%s chem_coupling=%s chem_expansion=%s rate_tables=%s gravity=%s gas_kick=%s source=%s phi_interp=%s midpoint_source=%s grav1buf=%s fft=%s particle_wrap=%s lattice_displacements=%s",
+                       String(mhd_solver), String(BACKEND_NAME), N, ncells/1e6,
                        zrun ? @sprintf("%.1f->%.1f", zstart, zend) : "off",
                        hub, Om, OL, Or, String(chem_mode), String(chem_coupling),
                        string(chem_expansion),
@@ -5155,7 +5292,7 @@ function main()
         MHDKernels.allocate_state(be_mhd, T, (N,N,N);
                                   dx=1/N, gamma=5/3, riemann=riemann, recon=recon,
                                   pfl=pfloor, llf_dmin=llf_dmin,
-                                  llf_pmin=llf_pmin)
+                                  llf_pmin=llf_pmin, mhd_solver=mhd_solver)
     end
     st = _stage("init_pmf_" * String(pmf_init)) do
         if pmf_init === :batchelor
@@ -5265,6 +5402,40 @@ function main()
         reference_band_brms_measured=Float32(NaN),
         normalization_brms_measured=imported_state_brms,
         normalization_kind="imported_joint_state", btrans0=Float32(NaN))))
+    # Constrained transport evolves B on faces. After EVERY initial-condition and import stage
+    # (and before any checkpoint restore) build the divergence-free face field once from the
+    # final cell field. Thermal pressure is preserved by the kernel (E is adjusted), and the
+    # normalization statistics reported by the run are re-measured from the resulting cell B.
+    ct_init_change = NaN
+    ct_init_energy_ratio = NaN
+    ct_init_divb_face = NaN
+    if use_ct
+        ct_first = hasproperty(st, :ct_faces) ? st.ct_faces : nothing
+        ct_again = _stage("ct_initial_faces") do
+            MHDKernels.ct_faces_from_cells!(s)
+        end
+        # The PMF initializers already projected the generated field (stats in st.ct_faces);
+        # their change is the one relative to the generated PMF. This second call covers the
+        # other initial-condition and import stages and is idempotent for PMF fields.
+        ct_report = ct_first === nothing ? ct_again : ct_first
+        ct_init_change = Float64(ct_report.cell_b_rel_l2_change)
+        ct_init_energy_ratio = Float64(ct_report.magnetic_energy_ratio)
+        ct_init_divb_face = Float64(ct_again.max_divb_face_dx_over_brms)
+        @printf("CT_INITIAL_FACES cell_b_rel_l2_change=%.6e magnetic_energy_ratio=%.9f divb_face_dx_over_brms=%.6e source=%s\n",
+                ct_init_change, ct_init_energy_ratio, ct_init_divb_face,
+                ct_first === nothing ? "runner" : "pmf_install")
+        @printf("CT_INITIAL_FACES_REPROJECT cell_b_rel_l2_change=%.6e magnetic_energy_ratio=%.9f divb_face_dx_over_brms=%.6e (second call on the final cell field; ~0 change = idempotent)\n",
+                ct_again.cell_b_rel_l2_change, ct_again.magnetic_energy_ratio,
+                ct_again.max_divb_face_dx_over_brms)
+        ct_brms_final = _device_brms!(be_mhd, s, s.scratch[1])
+        @printf("CT_INITIAL_NORMALIZATION brms_before_faces=%.8e brms_after_faces=%.8e (brms_measured/total_brms_measured now report the post-projection cell field; reference_band and normalization_brms stay the pre-projection values)\n",
+                Float64(st.total_brms_measured), ct_brms_final)
+        flush(stdout)
+        st = merge(st, (brms_measured_preprojection=st.brms_measured,
+                        total_brms_measured_preprojection=st.total_brms_measured,
+                        brms_measured=Float32(ct_brms_final),
+                        total_brms_measured=Float32(ct_brms_final)))
+    end
     if imported_state_brms !== nothing
         p0 = _stage("measure_imported_pressure") do
             _device_pressure_mean!(be_mhd, s, s.scratch[1])
@@ -5545,6 +5716,7 @@ function main()
         gravity_source=gravity_source, gravity_gas_kick=gravity_gas_kick,
         gravity_midpoint_source=gravity_midpoint_source,
         lattice_displacements=lattice_displacements, fft_mode=fft_mode,
+        mhd_solver=mhd_solver,
     )
     function _checkpoint_arrays()
         arrays = Pair{String,Any}[]
@@ -5577,6 +5749,20 @@ function main()
             end
             push!(arrays,"energy_residual"=>radiation_workspace.energy_residual)
         end
+        if use_ct
+            # Faces are the evolved CT state; restore them exactly (never rebuild from cells).
+            push!(arrays, "ct_bxf" => s.ct.bxf)
+            push!(arrays, "ct_byf" => s.ct.byf)
+            push!(arrays, "ct_bzf" => s.ct.bzf)
+            # Kahan remainders of the compensated face updates: active exactly when the
+            # radiation workspace compensates (GLM's magnetic_residual_$d analogue).
+            if radiation_workspace !== nothing &&
+               radiation_workspace.magnetic_residual !== nothing
+                push!(arrays, "ct_residual_1" => s.ct.rbx)
+                push!(arrays, "ct_residual_2" => s.ct.rby)
+                push!(arrays, "ct_residual_3" => s.ct.rbz)
+            end
+        end
         return arrays
     end
 
@@ -5602,7 +5788,9 @@ function main()
                 optional_missing_arrays=("magnetic_residual_1",
                                          "magnetic_residual_2",
                                          "magnetic_residual_3",
-                                         "energy_residual"))
+                                         "energy_residual",
+                                         "ct_residual_1", "ct_residual_2",
+                                         "ct_residual_3"))
             restart_cycle = runtime.cycle
             measured = runtime.measured
             measured_subcycles = runtime.measured_subcycles
@@ -5734,6 +5922,9 @@ function main()
             hybrid_handoff_displacement_tol,
             string(hybrid_reenter_terminal),
             hybrid_aware_dt_factor)
+    @printf("  mhd_solver=%s integrator=%s glm_ch_fac=%.6g glm_cr=%.6g glm_project_every=%d%s\n",
+            String(mhd_solver), String(mhd_integrator), glm_ch_fac, glm_cr, glm_project_every,
+            use_ct ? " (CT: ch_fac/cr unused, dt not GLM-limited, no B projection)" : "")
     @printf("  terminal induction=%s cfl=%.3f dissipation=%.3f/order%d project_b=%s max_subcycles=%d\n",
             string(terminal_induction), terminal_induction_cfl, terminal_induction_dissipation,
             terminal_induction_dissipation_order, string(terminal_project_b),
@@ -5939,7 +6130,9 @@ function main()
         end
         dt0 = dt0_ref[]
         smax = smax_ref[]
-        ch = T(glm_ch_fac) * T(smax)
+        # CT has no GLM wave speed: ch is the plain signal speed (kept finite and nonzero for the
+        # step interfaces that accept it), so dt_hydro_explicit == dt0 and nothing is GLM-limited.
+        ch = use_ct ? T(smax) : T(glm_ch_fac) * T(smax)
         dt_hydro_explicit = Float64(dt0) * Float64(smax) / Float64(max(T(smax), ch))
         hydro_per_tau = zrun ? _hydro_time_per_tau(a, hub, chem_vunit,
                                                    terminal_lbox_cm,
@@ -6447,7 +6640,7 @@ function main()
                             positivity_max_fallback_passes=
                                 radiation_positivity_max_fallback_passes,
                             positivity_wave_growth_limit=
-                                radiation_positivity_wave_growth_limit,
+                                radiation_positivity_wave_growth_eff,
                             positivity_max_subdivisions=
                                 radiation_positivity_max_subdivisions,
                             checkpoint_fallback_on_rejection=
@@ -7045,6 +7238,7 @@ function main()
             hydrogen_reference=evolving_xe_mean) :
         (NaN, NaN, NaN, NaN, ntuple(_ -> NaN, 12))
     gravity || (δdm = NaN)
+    divb_face_final = final_diag ? _device_divb_face_norm(s, br) : NaN
     _write_final_b_field!(get(ENV, "MHD_FINAL_B_DIR", ""), s;
                           N=N, z=zrun ? a_to_z(a) : NaN,
                           cycle=measured, brms=br)
@@ -7095,6 +7289,7 @@ function main()
             100*phase[:gas_gravity]/total, 100*phase[:push]/total)
     @printf("GLM: ch_fac=%.6g cr=%.6g project_every=%d projections=%d\n",
             glm_ch_fac, glm_cr, glm_project_every, glm_projection_steps)
+    use_ct && @printf("MHD_SOLVER: ct (GLM ch_fac/cr unused; dt not GLM-limited; no B projection)\n")
     @printf("SOURCE_CADENCE: max_dt_factor=%.6g limited_steps=%d\n",
             source_max_dt_factor, source_limited_steps)
     terminal_denom = max(terminal_measured, 1)
@@ -7106,6 +7301,8 @@ function main()
             memory_stats.live, memory_stats.allocated, memory_stats.freed)
     @printf("DIAG: Brms %.3e -> %.3e | divB*dx/Brms %.3e | delta_b_rms %.3e | delta_dm_rms %.3e\n",
             st.brms_measured, br, divn, δb, δdm)
+    use_ct && @printf("DIAG_CT: mhd_solver=ct divb_face*dx/Brms %.3e (exact face divergence; the centred divB above is a different diagnostic) | initial faces: cell_b_rel_l2_change=%.3e magnetic_energy_ratio=%.9f divb_face_dx_over_brms=%.3e\n",
+                      divb_face_final, ct_init_change, ct_init_energy_ratio, ct_init_divb_face)
     radiation_component_scale = radiation_energy_ledger === nothing ? NaN :
         abs(radiation_energy_ledger.kinetic_change) +
         abs(radiation_energy_ledger.internal_change) +
@@ -7263,7 +7460,11 @@ function main()
                                   "fft_s_cyc","gas_gravity_s_cyc","push_s_cyc","terminal_measured_cycles",
                                   "terminal_force_s_cyc","terminal_pressure_fft_s_cyc","terminal_finalize_s_cyc",
                                   "terminal_induction_s_cyc","terminal_projection_s_cyc",
-                                  "device_live_gib","device_allocated_gib","device_freed_gib"),
+                                  "device_live_gib","device_allocated_gib","device_freed_gib",
+                                  "mhd_solver","divb_face_dx_over_brms",
+                                  "ct_initial_cell_b_rel_l2_change",
+                                  "ct_initial_magnetic_energy_ratio",
+                                  "ct_initial_divb_face_dx_over_brms"),
                                  '\t'))
             end
             println(io, join((Dates.format(now(), dateformat"yyyy-mm-ddTHH:MM:SS"),
@@ -7363,7 +7564,9 @@ function main()
                               terminal_phase[:finalize]/terminal_denom,
                               terminal_phase[:induction]/terminal_denom,
                               terminal_phase[:projection]/terminal_denom,
-                              memory_stats.live, memory_stats.allocated, memory_stats.freed), '\t'))
+                              memory_stats.live, memory_stats.allocated, memory_stats.freed,
+                              String(mhd_solver), divb_face_final, ct_init_change,
+                              ct_init_energy_ratio, ct_init_divb_face), '\t'))
         end
     end
 end

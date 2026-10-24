@@ -3,7 +3,7 @@ using PMFGLM
 
 function cli(args)
     if isempty(args) || "--help" in args
-        println("Usage: julia --project[=environments/metal] -t auto scripts/run_pmf.jl CONFIG.toml --output=RUN_DIR [--backend=cpu|metal|cuda] [--dry-run]")
+        println("Usage: julia --project[=environments/metal] -t auto scripts/run_pmf.jl CONFIG.toml --output=RUN_DIR [--backend=cpu|metal|cuda] [--mhd-solver=glm|ct] [--dry-run]")
         return
     end
     config = load_config(first(args))
@@ -14,6 +14,10 @@ function cli(args)
             output = split(arg,'=';limit=2)[2]
         elseif startswith(arg,"--backend=")
             get!(config.settings,"run",Dict{String,Any}())["backend"] = split(arg,'=';limit=2)[2]
+        elseif startswith(arg,"--mhd-solver=")
+            solver = lowercase(split(arg,'=';limit=2)[2])
+            solver in ("glm","ct") || error("--mhd-solver must be glm or ct")
+            get!(config.settings,"run",Dict{String,Any}())["mhd_solver"] = solver
         elseif arg == "--dry-run"
             dry = true
         else

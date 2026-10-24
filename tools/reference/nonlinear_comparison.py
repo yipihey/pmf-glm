@@ -89,6 +89,11 @@ def case_settings(handoff, directory, args):
             "MHD_RADIATION_MAGNETIC_COMPENSATION":1,"MHD_RADIATION_FREE_STREAM_TOL":0,
             "MHD_DRAG_HELIUM_ELECTRONS":1,"MHD_PROFILE_SKIP_CYCLES":5},
     }
+    solver = getattr(args, "mhd_solver", "glm")
+    if solver != "glm":
+        settings["run"]["mhd_solver"] = solver
+        # CT rejects GLM B projection (its default is 0); this is the only other change.
+        del settings["physics"]["glm_project_every"]
     if args.response_table:
         settings["chemistry"]["nonlocal_table"] = str(args.response_table.resolve())
     return settings
@@ -170,6 +175,7 @@ def assess(output, handoff, args):
         background="independent RECFAST-v2 hydrogen/temperature and Saha helium",
         explicit_helium_perturbation="model extension; xHII above z1700 diagnostic",
         thermal_perturbations="full-network extension; not gated against reduced oracle",
+        mhd_solver=getattr(args,"mhd_solver","glm"),
         response_table=str(args.response_table) if args.response_table else None,
         response_table_sha256=(hashlib.sha256(args.response_table.read_bytes()).hexdigest()
             if args.response_table else None),
@@ -201,6 +207,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output",type=Path)
     parser.add_argument("--backend",choices=("cpu","metal","cuda"),default="cpu")
+    parser.add_argument("--mhd-solver",choices=("glm","ct"),default="glm")
     parser.add_argument("--resolution",type=int,default=32)
     parser.add_argument("--source-zstart",type=float,default=1e5)
     parser.add_argument("--zstart",type=float,default=3200)

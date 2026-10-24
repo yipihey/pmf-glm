@@ -8,6 +8,10 @@ using Statistics
     include("test_configuration.jl")
 end
 
+@testset "constrained-transport solver at the runner level" begin
+    include("test_ct_runner.jl")
+end
+
 @testset "periodic gravity and particles" begin
     include("test_gravity.jl")
 end
