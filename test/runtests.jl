@@ -23,6 +23,10 @@ include("streaming_checks.jl")
     end
 end
 
+module CubeCPUTestsHost
+include("test_cube_cpu.jl")
+end
+
 module InheritedMHDTests
 include("inherited/runtests.jl")
 end

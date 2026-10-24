@@ -51,6 +51,20 @@ const METAL_CUBE_GS = 128
     @inbounds for v in 1:9; S[(v-1)*NC+lin+1] = q[v]; end
 end
 
+# Block origin from the (hoisted) 1-based linear group index. KernelAbstractions'
+# CPU lowering splits the kernel into one workitem loop per `@synchronize` section,
+# so a local assigned in one section is out of scope in the next; the origin is
+# therefore re-derived at the top of every section (pure integer arithmetic, the
+# GPU lowering inlines it to the same code).
+@inline function _cube_origin(gidx,nb)
+    g0=gidx-1
+    (g0%nb)*CTB,((g0÷nb)%nb)*CTB,(g0÷(nb*nb))*CTB
+end
+@inline function _cube_origin_rect(gidx,nbx,nby)
+    g0=gidx-1
+    (g0%nbx)*RCTBX,((g0÷nbx)%nby)*RCTBY,(g0÷(nbx*nby))*RCTBZ
+end
+
 @inline function _cube_masked_riemann(qL,qR,dir,γ,ch,smallr,pfl,llf_dmin,
         llf_pmin,rsol,packed,stride,N,iL,jL,kL,iR,jR,kR,
         ::Val{CHECK}) where {CHECK}
@@ -119,7 +133,9 @@ end
         check_admissibility::Val{CHECK}) where {T,ST,DRAG,RAD,TRACK,TRACKB,TRACKE,CHECK}
     # Metal binds each scalar argument as a buffer. One isbits tuple keeps the
     # full radiation/positivity specialization below its 31-resource limit.
-    dtdx, γ, ch, decay, smallr, pfl, llf_dmin, llf_pmin = physics
+    # `@uniform`: hoisted to kernel scope so every `@synchronize` section of the
+    # CPU lowering sees it.
+    @uniform dtdx, γ, ch, decay, smallr, pfl, llf_dmin, llf_pmin = physics
     SP = @localmem ST (9*RCNCP)
     LX = @localmem ST (9*RCNFX); RX = @localmem ST (9*RCNFX)
     LY = @localmem ST (9*RCNFY); RY = @localmem ST (9*RCNFY)
@@ -128,9 +144,8 @@ end
         u = (a1,a2,a3,a4,a5,a6,a7,a8,a9)
         tid = @index(Local, Linear)
         nth = @uniform prod(@groupsize())
-        g0 = @index(Group, Linear) - 1
-        bx = g0 % nbx; by = (g0 ÷ nbx) % nby; bz = g0 ÷ (nbx*nby)
-        ox = bx*RCTBX; oy = by*RCTBY; oz = bz*RCTBZ
+        gidx = @index(Group, Linear)
+        ox, oy, oz = _cube_origin_rect(gidx, nbx, nby)
 
         t = tid
         while t <= RCNCP
@@ -141,6 +156,7 @@ end
             t += nth
         end
         @synchronize
+        ox, oy, oz = _cube_origin_rect(gidx, nbx, nby)
 
         t = tid
         while t <= (RCTBX+2)*(RCTBY+2)*(RCTBZ+2)
@@ -204,6 +220,7 @@ end
             t += nth
         end
         @synchronize
+        ox, oy, oz = _cube_origin_rect(gidx, nbx, nby)
 
         t = tid
         while t <= RCNFX+RCNFY+RCNFZ
@@ -235,6 +252,7 @@ end
             t += nth
         end
         @synchronize
+        ox, oy, oz = _cube_origin_rect(gidx, nbx, nby)
 
         t = tid
         while t <= RCTBX*RCTBY*RCTBZ
@@ -289,9 +307,8 @@ end
         u = (a1,a2,a3,a4,a5,a6,a7,a8,a9)
         tid = @index(Local, Linear)
         nth = @uniform prod(@groupsize())
-        g0  = @index(Group, Linear) - 1
-        bx = g0 % nb; by = (g0 ÷ nb) % nb; bz = g0 ÷ (nb*nb)
-        ox = bx*CTB; oy = by*CTB; oz = bz*CTB
+        gidx = @index(Group, Linear)
+        ox, oy, oz = _cube_origin(gidx, nb)
         # Stage 1: cons2prim -> 8^3 tile
         t = tid
         while t <= CNCP
@@ -304,6 +321,7 @@ end
             _sp9!(SP,CNCP,_ctile(pi,pj,pk),q); t+=nth
         end
         @synchronize
+        ox, oy, oz = _cube_origin(gidx, nb)
         # Stage 2: trace (multidim Hancock) over inner 6^3 -> per-face interface states
         t = tid
         while t <= (CTB+2)^3
@@ -357,6 +375,7 @@ end
             t+=nth
         end
         @synchronize
+        ox, oy, oz = _cube_origin(gidx, nb)
         # Stage 3: GLM Riemann once per face, flux written back into L*
         nfx=(CTB+1)*CTB*CTB; t=tid
         while t<=3*nfx
@@ -385,6 +404,7 @@ end
             t+=nth
         end
         @synchronize
+        ox, oy, oz = _cube_origin(gidx, nb)
         # Stage 4: conservative update of the 4^3 owned cells (+ψ damping)
         t=tid
         while t<=CTB*CTB*CTB
