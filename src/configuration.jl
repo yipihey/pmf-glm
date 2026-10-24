@@ -10,7 +10,7 @@ const CONFIG_KEYS = Dict(
         "reconstruction"=>"MHD_RECON", "riemann"=>"MHD_RIEMANN",
         "print_every"=>"MHD_PRINT_EVERY", "check_every"=>"MHD_CHECK_EVERY",
         "checkpoint_every"=>"MHD_CHECKPOINT_EVERY", "checkpoint_final"=>"MHD_CHECKPOINT_FINAL",
-        "resume"=>"MHD_CHECKPOINT_RESUME"),
+        "resume"=>"MHD_CHECKPOINT_RESUME", "mhd_solver"=>"MHD_SOLVER"),
     "cosmology" => Dict("zstart"=>"MHD_ZSTART", "zend"=>"MHD_ZEND", "h"=>"MHD_H",
         "omega_m"=>"MHD_OM", "omega_b"=>"MHD_OB", "omega_lambda"=>"MHD_OL",
         "omega_r"=>"MHD_OR", "box_ckpc_h"=>"MHD_TERMINAL_LBOX_CKPC",
@@ -78,6 +78,22 @@ function validate_config(c::RunConfig)
     precision = _setting(c, "run", "precision", "f32")
     precision in ("f32", "f64") || throw(ArgumentError("precision must be f32 or f64"))
     be != "cpu" && precision != "f32" && throw(ArgumentError("GPU production uses f32"))
+    solver = _setting(c, "run", "mhd_solver", "glm")
+    solver isa AbstractString && lowercase(solver) in ("glm", "ct") ||
+        throw(ArgumentError("run.mhd_solver must be \"glm\" or \"ct\""))
+    if lowercase(solver) == "ct"
+        raw = Dict{String,String}("MHD_SOLVER"=>"ct")
+        for (section, mapping) in CONFIG_KEYS, (key, name) in mapping
+            section == "diagnostics" && key == "streaming" && continue
+            value = _setting(c, section, key, nothing)
+            value === nothing || (raw[name] = _envstr(value))
+        end
+        for (key, value) in get(c.settings, "environment", Dict())
+            raw[key] = _envstr(value)
+        end
+        raw["MHD_SOLVER"] = "ct"
+        _validate_ct_environment(raw)
+    end
     cfl = _setting(c, "run", "cfl", 0.2)
     cfl isa Real && isfinite(cfl) && 0 < cfl <= 0.8 || throw(ArgumentError("CFL must be in (0,0.8]"))
     for key in ("steps", "max_cycles")
@@ -110,6 +126,31 @@ function validate_config(c::RunConfig)
     frames isa AbstractVector && all(z->z isa Real && isfinite(z) && z>=0,frames) ||
         throw(ArgumentError("diagnostics.frame_redshifts must be finite nonnegative redshifts"))
     return c
+end
+
+"""
+Reject option combinations that the constrained-transport solver (`MHD_SOLVER=ct`) cannot
+honour, before any state is allocated. `env` maps `MHD_*` names to strings (unset = default).
+The production driver repeats these checks on its own environment.
+"""
+function _validate_ct_environment(env::AbstractDict)
+    lowercase(get(env, "MHD_SOLVER", "glm")) == "ct" || return nothing
+    drag = lowercase(get(env, "MHD_DRAG_DT_MODE", ""))
+    drag in ("terminal", "hybrid") && throw(ArgumentError(
+        "mhd_solver=\"ct\" does not support MHD_DRAG_DT_MODE=$drag: the terminal closures " *
+        "overwrite cell-centred B and cannot update CT faces; use radiation, godunov, or explicit"))
+    lowercase(get(env, "MHD_INTEGRATOR", "ref")) == "cube" && throw(ArgumentError(
+        "mhd_solver=\"ct\" requires MHD_INTEGRATOR=ref; the cube integrators are GLM-only"))
+    lowercase(get(env, "MHD_BACKEND", "cpu")) == "metal" && throw(ArgumentError(
+        "mhd_solver=\"ct\" is not available on the Metal backend: the CT reference kernel needs " *
+        "38 buffer arguments and Metal allows 31; run CT on the CPU backend"))
+    if haskey(env, "MHD_GLM_PROJECT_EVERY")
+        n = tryparse(Int, strip(env["MHD_GLM_PROJECT_EVERY"]))
+        n !== nothing && n > 0 && throw(ArgumentError(
+            "mhd_solver=\"ct\" does not use GLM B projection: MHD_GLM_PROJECT_EVERY=$n " *
+            "would overwrite cell-centred B; leave it unset (CT default 0)"))
+    end
+    nothing
 end
 
 function known_environment_keys()
@@ -163,5 +204,7 @@ function run_environment(c::RunConfig; output_dir::AbstractString)
     for (key,value) in get(c.settings,"environment",Dict())
         env[key] = _envstr(value)
     end
+    haskey(env, "MHD_SOLVER") && (env["MHD_SOLVER"] = lowercase(env["MHD_SOLVER"]))
+    _validate_ct_environment(env)
     env
 end

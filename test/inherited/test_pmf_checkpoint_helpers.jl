@@ -52,6 +52,39 @@ end
     end
 end
 
+@testset "PMF checkpoint mhd_solver guard" begin
+    mktempdir() do dir
+        base = (N=4, zstart=3.0e6, zend=1.0e5, cfl=0.1)
+        source = Float32[1, 2, 3]
+        restore(path, config; arrays=["field" => zeros(Float32, 3)]) =
+            _restore_pmf_checkpoint!(path, config, arrays)
+        legacy = joinpath(dir, "legacy.jls")      # written before the key existed => GLM
+        glm = joinpath(dir, "glm.jls")
+        ct = joinpath(dir, "ct.jls")
+        _write_pmf_checkpoint(legacy, base, (cycle=1,), ["field" => source])
+        _write_pmf_checkpoint(glm, merge(base, (mhd_solver=:glm,)), (cycle=2,), ["field" => source])
+        _write_pmf_checkpoint(ct, merge(base, (mhd_solver=:ct,)), (cycle=3,),
+                              ["field" => source, "ct_bxf" => source])
+        want(solver) = merge(base, (mhd_solver=solver,))
+        # A legacy checkpoint is GLM: it resumes as GLM (also with a changed endpoint) ...
+        @test restore(legacy, want(:glm)).cycle == 1
+        @test restore(legacy, merge(want(:glm), (zend=5.0e4,))).cycle == 1
+        @test restore(glm, want(:glm)).cycle == 2
+        # ... and must never resume as CT, nor a GLM/CT checkpoint as the other solver.
+        for path in (legacy, glm)
+            err = try; restore(path, want(:ct)); nothing; catch e; e; end
+            @test err isa ErrorException
+            @test occursin("mhd_solver mismatch", err.msg)
+        end
+        err = try; restore(ct, want(:glm)); nothing; catch e; e; end
+        @test err isa ErrorException && occursin("mhd_solver mismatch", err.msg)
+        # CT faces round-trip exactly.
+        faces = zeros(Float32, 3); field = zeros(Float32, 3)
+        @test restore(ct, want(:ct); arrays=["field" => field, "ct_bxf" => faces]).cycle == 3
+        @test faces == source
+    end
+end
+
 @testset "nonlocal table checkpoint migration guard" begin
     mktempdir() do dir
         function write_table(path, redshifts)

@@ -45,6 +45,34 @@ mktempdir() do dir
     @test isempty(readdir(dir))
 end
 
+# Constrained-transport option: mapping, default, validation, and rejected combinations.
+let base = joinpath(@__DIR__,"..","examples")
+    glm = load_config(joinpath(base,"cosmology-smoke.toml"))
+    ct = load_config(joinpath(base,"cosmology-smoke-ct.toml"))
+    @test !haskey(run_environment(glm;output_dir="/tmp/pmf-config-test"),"MHD_SOLVER")
+    ctenv = run_environment(ct;output_dir="/tmp/pmf-config-test")
+    @test ctenv["MHD_SOLVER"] == "ct"
+    @test !haskey(ctenv,"MHD_GLM_PROJECT_EVERY")
+    @test run_environment(RunConfig(Dict("run"=>Dict("mhd_solver"=>"GLM")));
+        output_dir="/tmp/pmf-config-test")["MHD_SOLVER"] == "glm"
+    @test_throws ArgumentError RunConfig(Dict("run"=>Dict("mhd_solver"=>"dedner")))
+    @test_throws ArgumentError RunConfig(Dict("run"=>Dict("mhd_solver"=>1)))
+    ctrun(extra...) = RunConfig(Dict("run"=>Dict("mhd_solver"=>"ct"),extra...))
+    @test ctrun() isa RunConfig
+    @test ctrun("physics"=>Dict("glm_project_every"=>0)) isa RunConfig
+    for mode in ("terminal","hybrid")
+        @test_throws ArgumentError ctrun("physics"=>Dict("drag_mode"=>mode))
+        @test_throws ArgumentError ctrun("environment"=>Dict("MHD_DRAG_DT_MODE"=>mode))
+    end
+    @test_throws ArgumentError ctrun("physics"=>Dict("glm_project_every"=>1))
+    @test_throws ArgumentError ctrun("environment"=>Dict("MHD_GLM_PROJECT_EVERY"=>5))
+    @test_throws ArgumentError ctrun("environment"=>Dict("MHD_INTEGRATOR"=>"cube"))
+    @test ctrun("environment"=>Dict("MHD_INTEGRATOR"=>"ref")) isa RunConfig
+    @test_throws ArgumentError RunConfig(Dict("run"=>Dict("mhd_solver"=>"ct","backend"=>"metal")))   # 38/31 Metal buffer arguments
+    # The same options remain accepted for GLM.
+    @test RunConfig(Dict("physics"=>Dict("drag_mode"=>"terminal","glm_project_every"=>1))) isa RunConfig
+end
+
 # All local source paths must resolve inside this checkout. Active-root source
 # declarations are duplicated in the optional environments by Julia's rules.
 root = dirname(@__DIR__)
