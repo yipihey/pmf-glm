@@ -3,6 +3,7 @@ using PMFGLM
 using KernelAbstractions
 using FFTW
 using Statistics
+using LinearAlgebra
 
 @testset "configuration, units, and reproducible inputs" begin
     include("test_configuration.jl")
@@ -21,6 +22,10 @@ include("streaming_checks.jl")
     for T in (Float32,Float64)
         streaming_checks(:cpu,T)
     end
+end
+
+@testset "radiation density-mode persistence on the CPU FFT" begin
+    include("test_radiation_density_mode.jl")
 end
 
 module InheritedMHDTests
