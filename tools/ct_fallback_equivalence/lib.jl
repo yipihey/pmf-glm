@@ -49,7 +49,7 @@ function advance(s, integrator; nsteps, dt, ch, kw...)
     for n in 1:nsteps
         try
             with_logger(log) do
-                step_radiation_godunov!(s, ws, Float32(dt); drag_impulse=0f0, closure=CLOSURE,
+                step_radiation_godunov!(s, ws, Float32(dt); drag_impulse=0.1f0*Float32(dt), closure=CLOSURE,
                                         ch=Float32(ch), integrator=integrator, timing=tm, kw...)
             end
             done += 1
