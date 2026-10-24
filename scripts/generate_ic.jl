@@ -56,7 +56,9 @@ metadata = Dict("n"=>n,"unit"=>unit,"order"=>"Julia column-major (x fastest)",
     "source_fingerprint_sha256"=>source_fingerprint(),"sha256"=>hashes,
     "total_brms"=>Float64(stats.total_brms_measured),
     "reference_band_brms"=>Float64(stats.reference_band_brms_measured),
-    "normalization_kind"=>stats.normalization_kind,"configuration"=>config.settings)
+    "normalization_kind"=>stats.normalization_kind,
+    "mhd_solver"=>get(env,"MHD_SOLVER","glm"),
+    "mhd_solver_note"=>"The field is solver-independent. A CT run builds its face field from this cell field on import/start (see CT_INITIAL_FACES); GLM uses the cell field directly.","configuration"=>config.settings)
 open(io->TOML.print(io,metadata;sorted=true),joinpath(out,"ic.toml"),"w")
 println("Wrote ",out,"; B units: ",unit,"; total Brms=",stats.total_brms_measured)
 println("Import at the same start redshift/units with MHD_INITIAL_B_IMPORT_DIR; raw import preserves each Fourier amplitude. Regenerate for a different normalization epoch.")

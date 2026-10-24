@@ -18,6 +18,7 @@ pmf-matched-scenario = "tools.reference.matched_scenario:main"
 pmf-analyze = "tools.analysis.analyze_production:main"
 pmf-compare-nonlinear = "tools.reference.nonlinear_comparison:main"
 pmf-compare-solvers = "tools.reference.compare_solvers:main"
+pmf-compare-runs = "tools.analysis.compare_runs:main"
 
 [tool.setuptools.packages.find]
 include = ["tools.reference*", "tools.analysis*"]

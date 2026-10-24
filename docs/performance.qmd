@@ -34,6 +34,30 @@ machine instruction work. Record integrator, grid, iterations, Julia threads,
 hardware, version, source hash, and scope with the throughput.
 {{< src "scripts/benchmark.jl" "Warm compilation" >}}
 
+### Comparing GLM and CT throughput {#sec-kernel-benchmark-ct}
+
+`--mhd-solver=glm|ct|both` selects the solver (default `glm`, unchanged). CT
+always runs the `:ref` integrator, so `both` prints one table with GLM on its
+default integrator, GLM on `:ref` where that kernel compiles (the like-for-like
+integrator for CT), and CT, with the centred `divB dx/Brms` of every row and the
+exact face divergence for CT. GLM `:ref` does not compile on Metal (the kernel
+needs more than Metal's 31 kernel arguments; CT packs its arguments to fit) and is
+reported `NOT_RUN`, not omitted. Outputs default to `results/benchmark*.toml`,
+one file per row (`...-glm.toml`, `...-ct.toml`), and carry `mhd_solver`; none
+overwrites `docs/data/benchmark-*.toml`.
+
+```sh
+julia --project=environments/metal -t 4 scripts/benchmark.jl --backend=metal \
+  --n=96 --iterations=60 --mhd-solver=both --output=results/bench-metal-compare.toml
+```
+
+Apple M5 Max, N=96, 60 iterations, warm, Float32 (two repeats, 2026-10-24;
+the GPU is shared, so repeat before quoting): GLM cube 112.1 and 111.1, CT ref
+131.9 and 134.3 MCell/s. CT is the :ref integrator and carries 21 extra arrays per
+cell, so this is a kernel-only number, not a production-step speed; the CT step is
+also not GLM-limited (its `dt` is the plain CFL step, see
+[Comparing CT and GLM runs](validation.qmd#sec-ct-vs-glm)).
+
 For physical trajectories the production runner must not advance uncounted
 warmup states at a frozen cosmological time. Keep `MHD_WARMUP=0`; use
 `MHD_PROFILE_SKIP_CYCLES` to omit startup cycles from timing while preserving

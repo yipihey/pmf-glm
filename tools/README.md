@@ -37,7 +37,8 @@ The NPZ contains 1D profiles broadcastable transversely, not a native restart.
 
 The modules also support direct invocation, for example
 `python tools/reference/run_reference.py /tmp/pmf-reference`. An installed package
-provides `pmf-reference`, `pmf-matched-scenario`, and `pmf-analyze` commands.
+provides `pmf-reference`, `pmf-matched-scenario`, `pmf-analyze`, and `pmf-compare-runs` (two production runs, for
+example GLM versus CT, at common redshifts; see `docs/validation.qmd`) commands.
 
 ## Reference Modules
 

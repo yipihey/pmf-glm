@@ -63,6 +63,10 @@ field strength, physical cutoff, and output epochs, then run with the same CLI.
 The example has a **3 pG comoving** field (`b0_ng=0.003`), a **1 ckpc/h** box,
 full chemistry with expansion, MHD CFL 0.2, and photon nonlinear CFL 0.1.
 `--dry-run` prints the resolved solver settings without allocating the mesh.
+Add `--mhd-solver=ct` (or `run.mhd_solver = "ct"`) to use face-staggered constrained
+transport instead of the default GLM cleaning; `scripts/run_suite.jl`,
+`benchmark.jl` and `validate_production.jl` accept the same flag, and
+`examples/ct-vs-glm-suite.toml` plus `pmf-compare-runs` compare a matched pair.
 
 ```sh
 julia --project=environments/metal -t 4 scripts/run_pmf.jl examples/pmf-recombination.toml --backend=metal --output=runs/pmf-3pG-N128

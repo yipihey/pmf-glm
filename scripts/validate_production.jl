@@ -5,14 +5,34 @@ using TOML
 using Dates
 
 name = "cpu"
+solver = "glm"
+output = nothing
+usage = "usage: scripts/validate_production.jl --backend=cpu|metal|cuda [--mhd-solver=glm|ct] [--output=DIR]"
 for arg in ARGS
-    startswith(arg,"--backend=") || error("usage: scripts/validate_production.jl --backend=cpu|metal|cuda")
-    global name = split(arg,'=';limit=2)[2]
+    if startswith(arg,"--backend=")
+        global name = split(arg,'=';limit=2)[2]
+    elseif startswith(arg,"--mhd-solver=")
+        global solver = lowercase(split(arg,'=';limit=2)[2])
+    elseif startswith(arg,"--output=")
+        global output = abspath(split(arg,'=';limit=2)[2])
+    else
+        error(usage)
+    end
 end
 name in ("cpu","metal","cuda") || error("unsupported backend")
+solver in ("glm","ct") || error("--mhd-solver must be glm or ct")
+# Without --output this refreshes the tracked docs/data/production-BACKEND.toml (GLM only).
+# CT evidence never goes to tracked files implicitly: --output=DIR is required.
+solver == "ct" && output === nothing && error("--mhd-solver=ct requires --output=DIR (results/... keeps tracked evidence untouched)")
 root = dirname(@__DIR__)
 mkpath(joinpath(root,"results"))
-out = mktempdir(joinpath(root,"results"); prefix="production-$name-",cleanup=false)
+if output === nothing
+    out = mktempdir(joinpath(root,"results"); prefix="production-$name-",cleanup=false)
+else
+    ispath(output) && !isempty(readdir(output)) && error("--output must be new or empty: $output")
+    mkpath(output)
+    out = output
+end
 
 function checkpoint_arrays(path)
     open(path) do io
@@ -30,6 +50,7 @@ function checkpoint_arrays(path)
 end
 
 function launch(config,path;expected="COMPLETED")
+    get!(config.settings,"run",Dict{String,Any}())["mhd_solver"] = solver
     result = run_simulation(config;output_dir=path)
     result.status == expected || error("production case has unexpected endpoint: $result")
     result
@@ -46,6 +67,13 @@ function streaming_initial_check(path)
     columns = Base.split(modes[1],'\t'); mode = Base.split(modes[2],'\t')
     k = parse(Float64,mode[findfirst(==("k_comoving_mpc_inv"),columns)])
     isapprox(k,2pi*1000*0.674/2;rtol=1e-12) || error("physical mode box mismatch")
+end
+
+function last_history_value(path,column)
+    lines = readlines(joinpath(path,"history.tsv"))
+    header = Base.split(lines[1],'\t')
+    index = findfirst(==(column),header)
+    index === nothing ? NaN : parse(Float64,Base.split(lines[end],'\t')[index])
 end
 
 started = time()
@@ -104,16 +132,19 @@ end
 cadence_error <= 5e-6 || error("diagnostic cadence changed evolution: $cadence_error")
 worst = maximum(values(errors))
 passed = worst <= 5e-6
-record = Dict("schema_version"=>1,"backend"=>name,"status"=>passed ? "PASS" : "FAIL",
+record = Dict("schema_version"=>1,"backend"=>name,"mhd_solver"=>solver,"status"=>passed ? "PASS" : "FAIL",
     "created_utc"=>string(now(UTC)),"machine"=>gethostname(),
     "source_fingerprint_sha256"=>source_fingerprint(),"julia_version"=>string(VERSION),
     "julia_threads"=>Threads.nthreads(),"wall_seconds"=>time()-started,
     "scope"=>"full-physics endpoint smoke plus four-cycle planar streaming full-MHD/photon/H-He-chemistry/gravity restart and diagnostic-cadence parity",
-    "cosmology_status"=>full.status,"planar_max_scaled_error"=>planar_error,
+    "cosmology_status"=>full.status,
+    "cosmology_final_divb_centred_dx_over_brms"=>last_history_value(full.output_dir,"divBdx_over_brms"),
+    "cosmology_final_divb_face_dx_over_brms"=>last_history_value(full.output_dir,"divb_face_dx_over_brms"),"planar_max_scaled_error"=>planar_error,
     "streaming_initial_relative_tolerance"=>2e-6,"diagnostic_cadence_max_scaled_error"=>cadence_error,"restart_fields"=>length(errors),
     "restart_max_scaled_error"=>worst,"restart_error_tolerance"=>5e-6,
-    "run_directory"=>relpath(out,root),"restart_field_errors"=>errors)
-destination = joinpath(root,"docs","data","production-$name.toml")
+    "run_directory"=>relpath(out,root),"divb_note"=>solver == "ct" ? "CT: exact face divergence is in each run's history.tsv column divb_face_dx_over_brms" : "GLM: centred divB column divBdx_over_brms","restart_field_errors"=>errors)
+destination = output === nothing ? joinpath(root,"docs","data","production-$name.toml") :
+              joinpath(output,solver == "glm" ? "production-$name.toml" : "production-$name-$solver.toml")
 open(io->TOML.print(io,record;sorted=true),destination,"w")
 TOML.print(stdout,record;sorted=true)
 passed || error("production restart parity failed")
