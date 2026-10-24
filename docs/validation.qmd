@@ -97,6 +97,34 @@ cells at N64 and eight cells at N128. Review physical wavelength support,
 projection cadence, and identical output epochs as grids change. Inspect `COMPLETED`
 versus `STOPPED_AT_LIMIT` for every case before comparing histories.
 
+## CFL limit of the unsplit scheme {#sec-cfl-limit}
+
+The `:ref` integrator is an unsplit 3D MUSCL-Hancock scheme whose predictor uses all three
+flux directions without transverse corner-transport terms, so its linear stability limit is
+the classical one for such schemes (about 1/3 in 3D), not 1. The facade therefore rejects
+`run.cfl` (and `[environment] MHD_CFL`) above `0.25` for `mhd_solver = "glm"` and above `0.30`
+for `"ct"` (`MAX_STABLE_CFL` in `src/configuration.jl`). `cfl` is the Courant number of the
+signal speed `smax` for CT and of the cleaning speed `ch = glm_ch_fac * smax` for GLM.
+
+Measured with `tools/cfl_stability/cfl_stability.jl` (CPU, Float64, periodic 16^3 unless noted,
+uniform `rho = p = 1`, an oblique `k = (1,2,3)` wave plus `1e-6` white noise, `plm`, `hlld`,
+`glm_ch_fac = 2`; a run is `BLOWUP` when `max|rho-1|` reaches 0.1, `ok` otherwise after the
+stated steps; the ceiling is bracketed by the largest stable and smallest growing `cfl`):
+
+| Case | GLM stable / unstable | CT stable / unstable |
+|---|---|---|
+| `B = (0.8,0.5,0.4)` | 0.26 (4000 steps) / 0.28 (blowup at 1110 steps) | 0.42 (4000 steps) / 0.43 (blowup at 413 steps) |
+| `B = 0`, hydro only | 0.32 (3000 steps) / 0.33 (blowup at 1245 steps) | 0.33 (3000 steps) / 0.34 (growth 6.4e3) |
+| `B = 3 (0.8,0.5,0.4)` | 0.265 (3000 steps) / 0.27 (blowup) | 0.40 (3000 steps) / 0.45 (growth 1.2e4) |
+| `B` as first row, 32^3 | 0.26 (1500 steps) / 0.28 (blowup) | not run |
+| bulk `v = (1,1,1)` | 0.26 (3000 steps) / 0.28 (growth 4.5, 2.1 below it) and 0.30 (blowup at 1318 steps) | 0.40 (1500 steps) / 0.50 (blowup) |
+
+The accepted ceilings keep about 6 percent (GLM, 0.25 vs 0.265) and 9 percent (CT, 0.30 vs 0.33) below the lowest stable
+edge. Raising `cfl` further does not give a faster valid run: the grid-scale mode grows by
+more than four orders of magnitude within tens to hundreds of steps. The smoke problems are
+limited by the cosmological, radiation and particle-displacement caps, not the hydrodynamic
+CFL, so changing `cfl` there leaves the step sequence almost unchanged.
+
 ## Comparing CT and GLM runs {#sec-ct-vs-glm}
 
 `examples/cosmology-smoke-ct.toml` is the CT counterpart of
