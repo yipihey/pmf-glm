@@ -97,6 +97,33 @@ cells at N64 and eight cells at N128. Review physical wavelength support,
 projection cadence, and identical output epochs as grids change. Inspect `COMPLETED`
 versus `STOPPED_AT_LIMIT` for every case before comparing histories.
 
+## Comparing CT and GLM runs {#sec-ct-vs-glm}
+
+`examples/cosmology-smoke-ct.toml` is the CT counterpart of
+`examples/cosmology-smoke.toml`; to compare any case, keep the TOML identical
+except `run.mhd_solver`, and give each run a new output directory. Expected,
+documented differences are not discrepancies to fit away:
+
+- The default GLM radiation path projects `B` every cycle and limits the
+  explicit step by `ch = glm_ch_fac * smax`. CT does neither, so at equal `cfl`
+  its explicit step is the plain CFL step. Whether this matters depends on
+  whether the CFL step or a cosmological/source cap sets `dt`; the smoke
+  problem is capped by `max_dln_a`, where both solvers take identical steps.
+  `metadata.toml` records `ct_step_glm_limited = false` and `ct_glm_project_every = 0`.
+- CT builds its faces from the initial cell field, which changes that field by
+  O((k dx)^2) near the cutoff. Report the `CT_INITIAL_FACES` numbers
+  (`metadata.toml: ct_initial_*`). Using `curl_symbol = "continuum"` reduces the
+  change for Batchelor fields. The first history row of a CT run therefore
+  differs from GLM's at the level of that change, not at Float32 round-off.
+- Compare actual common redshifts from the `z` columns, not cycle numbers, and
+  compare `divb_face_dx_over_brms` (CT, Float32 round-off) with the centred
+  `divBdx_over_brms` (GLM). The centred value of a CT run is not constrained to zero.
+- The remaining agreement criteria are those of the
+  [science matrix](#sec-science-matrix): define tolerances before measuring, and
+  refine timestep and grid separately for each solver. CT runs on the CPU
+  backend only: Metal fails to compile the CT kernel (38 of 31 buffer
+  arguments) and CUDA is `NOT_RUN`.
+
 ## Float32 and thermal floors {#sec-thermal-floors}
 
 The total-energy formulation reconstructs thermal energy by subtracting kinetic

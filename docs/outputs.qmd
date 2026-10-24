@@ -38,7 +38,11 @@ zero or a final diagnostic file alone as proof the endpoint was reached.
 `history.tsv` includes `cycle`, `measured`, `z`, `a`, `brms`,
 `divBdx_over_brms`, `delta_b_rms`, `delta_dm_rms`, mean/min/max abundances,
 `xe_total`, transverse-mode diagnostics, pressure, internal energy, and
-temperature statistics. `brms` is in **code units**, temperature is K, and
+temperature statistics, with the exact face divergence `divb_face_dx_over_brms`
+appended as the last column (`NaN` for GLM runs). `performance.tsv` appends
+`mhd_solver`, `divb_face_dx_over_brms`, and the three `ct_initial_*` numbers;
+`metadata.toml` records `mhd_solver` (and, for CT, the same initial numbers).
+`brms` is in **code units**, temperature is K, and
 disabled physical channels may appear as `NaN`; do not substitute zero.
 {{< src "src/production/runner.jl" "function _write_history!" >}}
 

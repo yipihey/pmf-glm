@@ -42,6 +42,53 @@ examples. LLF fallback and positivity handling can change the local numerical
 diffusion and must be monitored. A portable reference integrator and fused cube
 integrator coexist. Shared source is not a substitute for backend parity tests.
 
+## Constrained transport (optional) {#sec-ct}
+
+`mhd_solver = "ct"` replaces the GLM divergence cleaning by face-staggered
+constrained transport [@gardiner2005]; GLM stays the default. The Godunov
+sweeps are shared with GLM: PLM/PPM reconstruction, the Hancock predictor, and
+HLLD/HLL/LLF fluxes on cell-centred conserved variables, with the normal
+magnetic component at each face overwritten by the staggered face value and
+`psi` identically zero. The induction update differs:
+
+1. The Godunov magnetic fluxes on the lower faces give face EMFs, and a
+   cell-centred reference EMF `E = -v x B` is built from the source-updated
+   predicted velocity and the step-start `B`.
+2. Edge EMFs are the Gardiner and Stone CT-contact average of the four adjacent
+   face EMFs, with upwind gradient corrections selected by the sign of the
+   mass flux and anchored on the cell-centred reference EMF.
+3. The face fields `bxf, byf, bzf` advance by the discrete curl of the edge
+   EMFs, so the face divergence is preserved to round-off.
+4. The cell-centred `B` used by every other module (energy, forces, chemistry,
+   radiation, diagnostics) is the average of the two faces.
+
+The scheme is a port of `ct_mhd.jl` from the Solaceonx/GLMMHDTurb sweep-fixes
+(commits `9d20e52` and `7256715`).
+{{< src "lib/MHDKernels/src/ct.jl" "_ct_gs05" >}}
+
+Initial conditions are generated as a cell field. Once all initial-condition and
+import stages are complete, the driver builds divergence-free faces from it once
+with the minimal change of the cell field (projection onto the face-solenoidal
+subspace with the `tan(k dx/2)` symbol), keeps the thermal pressure fixed, and
+logs `CT_INITIAL_FACES cell_b_rel_l2_change`, `magnetic_energy_ratio`, and
+`divb_face_dx_over_brms`. Because the PMF generators make the field solenoidal
+under another discrete symbol (centred `sin 2θ`, or continuum `θ`), this
+changes the field by O((k dx)^2) near the cutoff. The measured rms
+(`brms_measured`) reports the post-projection cell field; the reference-band
+normalization values remain those of the generated field.
+{{< src "lib/MHDKernels/src/ct.jl" "ct_faces_from_cells!" >}}
+
+**Limits.** CT is periodic-only and implemented on the `ref` integrator only; the
+`cube` integrators, terminal and hybrid drag, and the GLM projection are
+rejected. On Metal the CT `ref` kernel does not compile: it needs 38 buffer
+arguments and Metal allows 31 (`Total number of indirect argument buffer
+resources exceeded for buffers (38/31)`, observed on an Apple M5 Max), so
+`mhd_solver = "ct"` is rejected for `backend = "metal"`. CUDA is `NOT_RUN`. It allocates 18 extra `N^3` arrays (three face fields and 15 flux/EMF
+workspace arrays) on top of GLM's 18. The explicit step is not limited by the
+GLM cleaning speed. `divb_face_dx_over_brms` in `history.tsv` and
+`performance.tsv` is the exact face divergence (empty/`NaN` for GLM); the
+centred `divBdx_over_brms` is a different diagnostic and is not zero for CT.
+
 ## Magnetic-force decomposition {#sec-force-split}
 
 The centered Maxwell-stress diagnostic uses
