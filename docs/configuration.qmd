@@ -36,7 +36,7 @@ and validation are in `CONFIG_KEYS`.
 
 | Table | Common keys | Meaning |
 |---|---|---|
-| `[run]` | `n`, `backend`, `precision`, `steps`, `max_cycles`, `cfl` | Grid, device, numerical budget |
+| `[run]` | `n`, `backend`, `precision`, `steps`, `max_cycles`, `cfl` | Grid, device, numerical budget; `cfl` must be in `(0, 0.25]` for GLM and `(0, 0.30]` for CT ([measured limit](validation.qmd#sec-cfl-limit)) |
 | `[run]` | `reconstruction`, `riemann`, `print_every`, `check_every` | Scheme and log/health cadence |
 | `[run]` | `checkpoint_every`, `checkpoint_final`, `resume` | Checkpoint write/resume policy |
 | `[run]` | `mhd_solver` | Divergence treatment: `"glm"` (default) or `"ct"` ([constrained transport](#sec-mhd-solver)) |

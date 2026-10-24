@@ -8,6 +8,14 @@ using Statistics
     include("test_configuration.jl")
 end
 
+@testset "CFL stability limits of the unsplit scheme" begin
+    include("test_cfl_stability.jl")
+end
+
+@testset "terminal pressure-implicit determinism and CPU exponential solve" begin
+    include("test_terminal_pressure_determinism.jl")
+end
+
 @testset "constrained-transport solver at the runner level" begin
     include("test_ct_runner.jl")
 end

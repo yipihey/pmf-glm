@@ -105,3 +105,23 @@ streaming_env = run_environment(streaming_config;output_dir="/tmp/pmf-streaming-
 for key in ("MHD_STREAMING_VX_KMS","MHD_PMF_INVARIANT_AXIS")
     @test_throws ErrorException PMFGLM._validate_restart_environment(env,merge(env,Dict(key=>"1")))
 end
+
+@testset "CFL ceiling follows the measured stability limit" begin
+    @test PMFGLM.MAX_STABLE_CFL == Dict("glm"=>0.25, "ct"=>0.30)
+    @test RunConfig(Dict("run"=>Dict("cfl"=>0.25))) isa RunConfig
+    @test RunConfig(Dict("run"=>Dict("cfl"=>0.3,"mhd_solver"=>"ct"))) isa RunConfig
+    for cfl in (0.8, 0.5, 0.2501, 0.0, -0.1, NaN, Inf)
+        @test_throws ArgumentError RunConfig(Dict("run"=>Dict("cfl"=>cfl)))
+    end
+    @test_throws ArgumentError RunConfig(Dict("run"=>Dict("cfl"=>0.31,"mhd_solver"=>"ct")))
+    @test_throws ArgumentError RunConfig(Dict("run"=>Dict("cfl"=>0.8,"mhd_solver"=>"ct")))
+    # [environment] overrides the named options, so it is validated too.
+    @test_throws ArgumentError RunConfig(Dict("environment"=>Dict("MHD_CFL"=>"0.8")))
+    @test_throws ArgumentError RunConfig(Dict("run"=>Dict("cfl"=>0.28,"mhd_solver"=>"ct"),
+                                              "environment"=>Dict("MHD_SOLVER"=>"glm")))
+    # every shipped example is within its solver's ceiling
+    for file in readdir(joinpath(@__DIR__, "..", "examples"); join=true)
+        (endswith(file, ".toml") && !occursin("suite", file)) || continue
+        @test load_config(file) isa RunConfig
+    end
+end

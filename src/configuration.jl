@@ -56,6 +56,19 @@ _envstr(x::Bool) = x ? "true" : "false"
 _envstr(x::AbstractVector) = join(_envstr.(x), ",")
 _envstr(x) = string(x)
 
+"""
+Largest accepted CFL number per MHD solver.  Measured (CPU, Float64, 16^3 and 32^3 periodic
+box, oblique wave plus white noise, `tools/cfl_stability/cfl_stability.jl`): the GLM driver
+(`ch = 2 smax`, dt = cfl dx / ch) is stable to cfl = 0.265 and unstable from 0.27, CT
+(dt = cfl dx / smax) is stable to 0.33 and unstable from 0.34 (both: the unsplit scheme
+without corner-transport terms has the classical 3D limit near 1/3).  The accepted values
+keep a margin of about 6 percent (GLM) and 9 percent (CT) below the lowest stable edge measured.
+"""
+const MAX_STABLE_CFL = Dict("glm"=>0.25, "ct"=>0.30)
+
+_parse_env_cfl(x::Real) = x
+_parse_env_cfl(x) = something(tryparse(Float64, strip(string(x))), NaN)
+
 function validate_config(c::RunConfig)
     for (section, values) in c.settings
         section in keys(CONFIG_KEYS) || section == "environment" ||
@@ -94,8 +107,17 @@ function validate_config(c::RunConfig)
         raw["MHD_SOLVER"] = "ct"
         _validate_ct_environment(raw)
     end
-    cfl = _setting(c, "run", "cfl", 0.2)
-    cfl isa Real && isfinite(cfl) && 0 < cfl <= 0.8 || throw(ArgumentError("CFL must be in (0,0.8]"))
+    # [environment] overrides the named options (see docs/configuration.qmd), so validate the
+    # values the driver will actually see.
+    env_overrides = get(c.settings, "environment", Dict())
+    cfl = haskey(env_overrides, "MHD_CFL") ? _parse_env_cfl(env_overrides["MHD_CFL"]) :
+          _setting(c, "run", "cfl", 0.2)
+    eff_solver = lowercase(string(get(env_overrides, "MHD_SOLVER", solver)))
+    cfl_max = get(MAX_STABLE_CFL, eff_solver, MAX_STABLE_CFL["glm"])
+    cfl isa Real && !(cfl isa Bool) && isfinite(cfl) && 0 < cfl <= cfl_max ||
+        throw(ArgumentError("CFL must be in (0,$cfl_max] for mhd_solver=\"$eff_solver\" " *
+                            "(measured stability limit of the unsplit 3D MUSCL-Hancock scheme, " *
+                            "see docs/validation.qmd#sec-cfl-limit)"))
     for key in ("steps", "max_cycles")
         value = _setting(c, "run", key, 1)
         value isa Integer && value > 0 || throw(ArgumentError("run.$key must be positive"))
