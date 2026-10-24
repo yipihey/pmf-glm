@@ -16,16 +16,16 @@ bname === :metal && @eval import Metal
 using MHDKernels
 include(joinpath(@__DIR__, "lib.jl"))
 glm_int = :cube
-function setup(u, p0, cfl)
-    s0 = make_state(:glm, bname; u=u, p0=p0)
+function setup(u, p0, cfl; bscale=1f0)
+    s0 = make_state(:glm, bname; u=u, p0=p0, bscale=bscale)
     sm = Float32(max_wavespeed!(allocate_radiation_workspace(s0).fft_real, s0))
     (dt = cfl*s0.dx/sm, ch = 2*sm)
 end
-function pair(label, u, p0, cfl, ns; kw...)
-    (dt, ch) = setup(u, p0, cfl)
-    @printf("== %s: u=%g p0=%g cfl=%g steps=%d dt=%.4e ch=%.4f\n", label, u, p0, cfl, ns, dt, ch)
-    g = advance(make_state(:glm, bname; u=u, p0=p0), glm_int; nsteps=ns, dt=dt, ch=ch, kw...)
-    c = advance(make_state(:ct,  bname; u=u, p0=p0), :ref;    nsteps=ns, dt=dt, ch=ch, kw...)
+function pair(label, u, p0, cfl, ns; bscale=1f0, kw...)
+    (dt, ch) = setup(u, p0, cfl; bscale=bscale)
+    @printf("== %s: u=%g p0=%g cfl=%g bscale=%g steps=%d dt=%.4e ch=%.4f\n", label, u, p0, cfl, bscale, ns, dt, ch)
+    g = advance(make_state(:glm, bname; u=u, p0=p0, bscale=bscale), glm_int; nsteps=ns, dt=dt, ch=ch, kw...)
+    c = advance(make_state(:ct,  bname; u=u, p0=p0, bscale=bscale), :ref;    nsteps=ns, dt=dt, ch=ch, kw...)
     report("GLM :cube", g); report("CT  :ref", c)
     g, c
 end
@@ -50,6 +50,9 @@ verdict("benign", g0, c0)
 ga, ca = pair("A subdivision", 10f0, 1f-3, 1.5f0, 1);  verdict("A", ga, ca)
 gb, cb = pair("B1 multi-step", 10f0, 1f-3, 0.4f0, 8); verdict("B1", gb, cb)
 gb2, cb2 = pair("B2 multi-step", 5f0, 1f-4, 0.9f0, 8); verdict("B2", gb2, cb2)
+# weak-B variants (bscale=0.1, plasma beta ~ 2): pressure positivity is not a cancellation of two large energies
+gb3, cb3 = pair("B3 robust fallback, weak B", 10f0, 1f-3, 0.8f0, 8; bscale=0.1f0); verdict("B3", gb3, cb3)
+gb4, cb4 = pair("B4 mixed, weak B", 10f0, 1f-3, 1.0f0, 8; bscale=0.1f0); verdict("B4", gb4, cb4)
 # C: checkpoint-fallback error path (problem A): both must throw, and leave the state at its pre-step value.
 (dt, ch) = setup(10f0, 1f-3, 1.5f0)
 for (nm, solver, integ) in (("GLM :cube", :glm, glm_int), ("CT  :ref", :ct, :ref))

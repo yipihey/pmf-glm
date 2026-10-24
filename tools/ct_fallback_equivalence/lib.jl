@@ -18,14 +18,14 @@ end
 
 # 123-type rarefaction in x with weak oblique B: vx = -u (x<1/2), +u (x>=1/2), uniform rho=1,
 # cold gas (pressure p0), Bx(y) = 0.3+0.2 sin(2pi y), By = bamp cos(2pi x), Bz = bamp sin(2pi x+1/2).
-function make_state(solver::Symbol, bname::Symbol; N=16, u=10f0, p0=1f-5, bamp=0.1f0, T=Float32)
+function make_state(solver::Symbol, bname::Symbol; N=16, u=10f0, p0=1f-5, bamp=0.1f0, bscale=1f0, T=Float32)
     gamma = T(5)/3
     s = allocate_state(backend(bname), T, (N,N,N); dx=1/N, gamma=gamma, riemann=:hll, mhd_solver=solver)
     h = ntuple(_ -> zeros(T, N^3), 9)
     for k in 1:N, j in 1:N, i in 1:N
         c = linidx(N,N,i,j,k); x=(i-1)/T(N); y=(j-1)/T(N)
         rho = one(T); vx = x < 0.5 ? -u : u; vy = T(0.05)*u*sin(2T(pi)*x+1)*cos(2T(pi)*y)
-        bx = T(0.2)*sin(2T(pi)*y)+T(0.3); by = bamp*cos(2T(pi)*x); bz = bamp*sin(2T(pi)*x+T(0.5))
+        bx = bscale*(T(0.2)*sin(2T(pi)*y)+T(0.3)); by = bscale*bamp*cos(2T(pi)*x); bz = bscale*bamp*sin(2T(pi)*x+T(0.5))
         h[1][c]=rho; h[2][c]=rho*vx; h[3][c]=rho*vy
         h[6][c]=bx; h[7][c]=by; h[8][c]=bz
         h[5][c]=p0/(gamma-1)+T(0.5)*rho*(vx^2+vy^2)+T(0.5)*(bx^2+by^2+bz^2)
