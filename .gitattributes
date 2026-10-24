@@ -9,3 +9,5 @@
 lib/**/LICENSE whitespace=-trailing-space
 test/python/fixtures/licenses/*.LICENSE whitespace=-trailing-space
 docs/data/*.log -whitespace
+# Captured comparison tables were committed with CRLF; keep their evidence bytes verbatim.
+docs/data/native-mode-*/comparison.tsv -text
