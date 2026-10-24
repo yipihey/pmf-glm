@@ -78,9 +78,10 @@ before any state is allocated (both in the TOML validation and again in the driv
 | `MHD_INTEGRATOR` | Default `ref` on every backend; an explicit `cube` is an error |
 | `physics.drag_mode` | `terminal` and `hybrid` are supported (face-staggered terminal induction, still `MHD_ALLOW_UNCERTIFIED_TERMINAL=1`). Errors: `MHD_TERMINAL_INDUCTION=ssprk2`, and `MHD_TERMINAL_PRESSURE_IMPLICIT=1` with an induction other than `ct` (cell-centred B writers) |
 | `physics.glm_project_every` | Default `0` (GLM radiation runs default to projecting every cycle); a value above zero is an error |
-| `physics.glm_ch_factor`, `MHD_GLM_CR` | Unused. The explicit step is not limited by the GLM speed `ch`; `dt` is the plain CFL step |
+| `physics.glm_ch_factor`, `MHD_GLM_CR` | The explicit step is not limited by the GLM speed `ch`; `dt` is the plain CFL step. `glm_ch_factor` only scales the radiation positivity wave-speed limit (next rows); `MHD_GLM_CR` is unused |
 | `backend` | CPU and Metal; CUDA is not run |
 | `MHD_RADIATION_MAGNETIC_COMPENSATION` | `1` also makes the radiation-coupled steps sum the CT face updates with Kahan compensation (GLM: cell `B`); the face remainders are checkpointed as `ct_residual_1..3`. Use it for strong-guide-field, Float32 cases (the native-mode case sets it) |
+| `MHD_RADIATION_POSITIVITY_*`, `MHD_RADIATION_CHECKPOINT_FALLBACK` | Honoured for CT as for GLM `cube` (trial check, restore, minmod-PLM/HLL retry, subdivision, checkpoint error), at the cost of 6 extra `N^3` face-snapshot arrays. `MHD_RADIATION_POSITIVITY_WAVE_GROWTH_LIMIT` is multiplied by `MHD_GLM_CH_FAC` for CT (so the absolute limit equals GLM's); GLM `ref` has no such protection |
 | Checkpoints | A checkpoint without an `mhd_solver` key is a GLM checkpoint. GLM and CT checkpoints cannot be resumed as one another; CT checkpoints store the face fields (and, with compensation, the face remainders) |
 
 Consequently a CT and a GLM run at equal `cfl` do not take identical steps

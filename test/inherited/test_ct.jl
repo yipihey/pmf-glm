@@ -459,7 +459,7 @@ end
                           gas_sound_speed=1f0, response_model=:moments)
     ledger = RadiationEnergyLedger()
     for _ in 1:2
-        step_radiation_godunov!(sr, ws, 2f-4; drag_impulse=7f0*2f-4, closure=rc, ch=0f0,
+        step_radiation_godunov!(sr, ws, 2f-4; drag_impulse=7f0*2f-4, closure=rc, ch=1f0,
                                 integrator=:ref, photon_state=photons, energy_ledger=ledger)
     end
     h = fields_to_host(sr)

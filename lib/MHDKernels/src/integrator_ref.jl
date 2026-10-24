@@ -232,9 +232,14 @@ end
 
 function step_ref_radiation!(s::MHDState{T},dt::Real;ch::Real,decay::Real,
         drag_impulse::Real,correction,track_density::Bool=true,
-        track_magnetic::Bool=true,track_energy::Bool=true) where {T}
+        track_magnetic::Bool=true,track_energy::Bool=true,
+        robust_fallback::Bool=false) where {T}
     Nx,Ny,Nz=s.dims; dtdx=T(dt)/s.dx; cx,cy,cz=bc_codes(s)
-    rec=Val(recon_code_of(s)); rsol=Val(riemann_code_of(s)); q=T(drag_impulse)
+    # robust_fallback: the conservative minmod-PLM/HLL step of the positivity
+    # fallback, passed as compile-time codes without touching s.recon/s.riemann.
+    rec=robust_fallback ? Val(RECON_PLM_MINMOD) : Val(recon_code_of(s))
+    rsol=robust_fallback ? Val(RSOLVE_HLL) : Val(riemann_code_of(s))
+    q=T(drag_impulse)
     _launch_step_ref!(s,s.scratch,(s.U[1],s.U[2],s.U[3],s.U[4],s.U[5],
         s.U[6],s.U[7],s.U[8],correction),(Nx,Ny,Nz,cx,cy,cz),rec,rsol,
         (dtdx,s.γ,T(ch),T(decay),s.smallr,s.pfl,s.llf_dmin,s.llf_pmin),

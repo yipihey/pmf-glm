@@ -76,7 +76,7 @@ function RadiationClosure(; inertia_ratio::Real, mean_free_path::Real,
                             _radiation_response_code(response_model))
 end
 
-struct RadiationWorkspace{T,A,V,H,C,Q,P,K,B,D,M,L,S}
+struct RadiationWorkspace{T,A,V,H,C,Q,P,K,B,D,M,L,S,X}
     packed_psi_correction::V
     real_batch::B
     fft_real::A
@@ -94,6 +94,11 @@ struct RadiationWorkspace{T,A,V,H,C,Q,P,K,B,D,M,L,S}
     density_hat_valid::L
     density_limiter_active::L
     density_limiter_min_theta::S
+    # CT states only (else `nothing`): device copy of the 6 face-state arrays
+    # (bxf,byf,bzf,rbx,rby,rbz; 6*ncells values) taken before each positivity-protected
+    # trial, because `ct_update!` overwrites them in place. 6/(9+9+21)=15% of the
+    # state+CT memory, 6 extra N^3 arrays.
+    ct_snapshot::X
 end
 
 @kernel function _radiation_initialize_density_k!(delta,@Const(rho),rho_mean)
@@ -211,11 +216,12 @@ function allocate_radiation_workspace(s::MHDState{T};
     _radiation_initialize_density_k!(s.be)(density_perturbation,s.U[1],rho_mean;
                                             ndrange=ncells(s))
     KA.synchronize(s.be)
+    ct_snapshot=uses_ct(s) ? device_zeros(s.be,T,(6*ncells(s),)) : nothing
     RadiationWorkspace(packed,real_batch,fft_real,corr,density_perturbation,
                        rho_mean,hat_batch,hats,density_hat,
                        authoritative_density_hat,longitudinal_propagator,
                        Ref(typemax(UInt)),magnetic_residual,energy_residual,
-                       Ref(false),Ref(false),Ref(1.0))
+                       Ref(false),Ref(false),Ref(1.0),ct_snapshot)
 end
 
 function _radiation_reset_magnetic_residual!(ws::RadiationWorkspace)
@@ -238,14 +244,44 @@ function _radiation_trial_admissible(s::MHDState)
     isfinite(rho_min) && rho_min>=max(Float64(s.smallr),Float64(s.llf_dmin))
 end
 
+# The CT arrays that `ct_update!` overwrites in place and that therefore need a
+# pre-trial copy: faces and their Kahan remainders, in snapshot order.
+_ct_snapshot_arrays(ct)=(ct.bxf,ct.byf,ct.bzf,ct.rbx,ct.rby,ct.rbz)
+
+function _ct_snapshot_save!(s::MHDState,ws::RadiationWorkspace)
+    snap=ws.ct_snapshot
+    snap===nothing && error("CT positivity fallback needs a workspace allocated " *
+                            "from the CT state (ct_snapshot missing)")
+    nc=ncells(s)
+    for (q,a) in enumerate(_ct_snapshot_arrays(s.ct))
+        copyto!(view(snap,(q-1)*nc+1:q*nc),a)
+    end
+    nothing
+end
+
+function _ct_snapshot_restore!(s::MHDState,ws::RadiationWorkspace)
+    snap=ws.ct_snapshot
+    snap===nothing && error("CT trial restore needs a workspace allocated from " *
+                            "the CT state (ct_snapshot missing)")
+    nc=ncells(s)
+    for (q,a) in enumerate(_ct_snapshot_arrays(s.ct))
+        copyto!(a,view(snap,(q-1)*nc+1:q*nc))
+    end
+    nothing
+end
+
+# Bring back the complete pre-step state. Cell fields are the swapped-out
+# `s.scratch`. For CT the faces and their Kahan remainders were also advanced in
+# place and come back from the snapshot, exactly (no remainder is lost); cell B
+# (a face average) is already the pre-step one from the swap.
 function _restore_radiation_trial!(s::MHDState,ws::RadiationWorkspace,
                                    track_density::Bool)
-    _require_glm(s, "_restore_radiation_trial! (cube positivity fallback)")
     s.U,s.scratch=s.scratch,s.U
     # A rejected trial has already replaced the in-place Kahan remainders.
-    # Resetting loses at most one Float32 rounding remainder while preserving
-    # the accepted conservative state; fallback steps are exceptional.
+    # For GLM, resetting loses at most one Float32 rounding remainder while
+    # preserving the accepted conservative state; fallback steps are exceptional.
     _radiation_reset_magnetic_residual!(ws,s)
+    uses_ct(s) && _ct_snapshot_restore!(s,ws)
     if track_density
         _radiation_initialize_density_k!(s.be)(ws.density_perturbation,s.U[1],
             ws.rho_mean;ndrange=ncells(s))
@@ -1463,6 +1499,23 @@ function _radiation_state_bounds!(ws::RadiationWorkspace,s::MHDState)
      eint_max=Float64(maximum(ws.fft_real)))
 end
 
+# CT (:ref) trial admissibility. The :cube kernel flags a cell inadmissible when rho is
+# below the LLF gate, any field is non-finite, or the internal energy E-ek-eb falls below
+# pfl/(gamma-1); the host then sees a negative density. The :ref kernel has no such flag, so
+# CT evaluates the same conditions on the stored trial state (cell B = face average, i.e.
+# exactly what the next step reconstructs from): density gate on the host, finite
+# internal energy and eint >= pfl/(gamma-1) in one device pass over `ws.fft_real`. GLM
+# keeps the single-argument density check (its :cube kernel already encodes the rest).
+function _radiation_trial_admissible(s::MHDState,ws::RadiationWorkspace)
+    _radiation_trial_admissible(s) || return false
+    uses_ct(s) || return true
+    _radiation_internal_energy_k!(s.be)(ws.fft_real,s.U[1],s.U[2],s.U[3],
+        s.U[4],s.U[5],s.U[6],s.U[7],s.U[8],s.smallr;ndrange=ncells(s))
+    KA.synchronize(s.be)
+    eint_min=Float64(minimum(ws.fft_real))
+    isfinite(eint_min) && eint_min>=Float64(s.pfl)/(Float64(s.γ)-1)
+end
+
 @kernel function _radiation_fallback_mask_k!(mask,@Const(trial_rho),N)
     c=@index(Global)
     @inbounds begin
@@ -1660,6 +1713,12 @@ local-drag predictor, so the free-streaming limit recovers
 `step_drag_godunov!`. The same response corrects the conservative trial state;
 gas internal and magnetic energies are retained while radiation removes or
 returns only the corresponding kinetic work.
+
+Positivity protection (trial check, restore, minmod-PLM/HLL retry, subdivision or
+checkpoint error) runs for the `:cube` integrator and for CT (`mhd_solver=:ct`) states
+on `:ref`; GLM on `:ref` has none. The wave-speed gate is
+`positivity_wave_growth_limit*ch`, so CT callers must pass a positive `ch` (the signal
+speed; CT dynamics do not use it).
 """
 function step_radiation_godunov!(s::MHDState{T},ws,dt::Real;
         drag_impulse::Real,closure::RadiationClosure,ch::Real,
@@ -1755,7 +1814,11 @@ function step_radiation_godunov!(s::MHDState{T},ws,dt::Real;
     _time_radiation_stage!(timing,:godunov_s) do
         decay=exp(-T(glm_cr)*T(ch)*T(dt)/s.dx)
         track_density=rc.response_model!=_RADIATION_RESPONSE_MOMENTS_EXPONENTIAL
-        use_fallback=positivity_fallback && integrator===:cube
+        # GLM protects the :cube integrator only (the :ref GLM path is unchanged);
+        # CT runs on :ref and is protected here too, with the pre-step faces
+        # snapshotted below since ct_update! overwrites them in place.
+        use_fallback=positivity_fallback && (integrator===:cube || uses_ct(s))
+        use_fallback && uses_ct(s) && _ct_snapshot_save!(s,ws)
         if integrator===:ref
             step_ref_radiation!(s,dt;ch=ch,decay=decay,drag_impulse=drag_impulse,
                                 correction=ws.packed_psi_correction,
@@ -1771,7 +1834,7 @@ function step_radiation_godunov!(s::MHDState{T},ws,dt::Real;
             error("unknown radiation integrator :$integrator (have :ref, :cube)")
         end
         if use_fallback
-            trial_admissible=_radiation_trial_admissible(s)
+            trial_admissible=_radiation_trial_admissible(s,ws)
             wave_limit=Float64(positivity_wave_growth_limit)*
                        max(Float64(ch),eps(Float64))
             if trial_admissible
@@ -1787,13 +1850,22 @@ function step_radiation_godunov!(s::MHDState{T},ws,dt::Real;
 
                 # The second trial is a complete conservative update: every face
                 # uses the same minmod-PLM/HLL flux, unlike a cell-local flux swap.
-                step_cube_radiation!(s,dt;ch=ch,decay=decay,
-                    drag_impulse=drag_impulse,
-                    correction=ws.packed_psi_correction,
-                    track_density=track_density,check_admissibility=true,
-                    track_magnetic=ws.magnetic_residual!==nothing,
-                    robust_fallback=true)
-                robust_admissible=_radiation_trial_admissible(s)
+                if integrator===:ref
+                    step_ref_radiation!(s,dt;ch=ch,decay=decay,
+                        drag_impulse=drag_impulse,
+                        correction=ws.packed_psi_correction,
+                        track_density=track_density,
+                        track_magnetic=ws.magnetic_residual!==nothing,
+                        robust_fallback=true)
+                else
+                    step_cube_radiation!(s,dt;ch=ch,decay=decay,
+                        drag_impulse=drag_impulse,
+                        correction=ws.packed_psi_correction,
+                        track_density=track_density,check_admissibility=true,
+                        track_magnetic=ws.magnetic_residual!==nothing,
+                        robust_fallback=true)
+                end
+                robust_admissible=_radiation_trial_admissible(s,ws)
                 robust_wave_speed=robust_admissible ?
                     Float64(max_wavespeed!(ws.fft_real,s)) : 0.0
                 robust_rejected=!robust_admissible ||
