@@ -61,8 +61,14 @@ let base = joinpath(@__DIR__,"..","examples")
     @test ctrun() isa RunConfig
     @test ctrun("physics"=>Dict("glm_project_every"=>0)) isa RunConfig
     for mode in ("terminal","hybrid")
-        @test_throws ArgumentError ctrun("physics"=>Dict("drag_mode"=>mode))
-        @test_throws ArgumentError ctrun("environment"=>Dict("MHD_DRAG_DT_MODE"=>mode))
+        @test ctrun("physics"=>Dict("drag_mode"=>mode)) isa RunConfig
+        @test ctrun("environment"=>Dict("MHD_DRAG_DT_MODE"=>mode)) isa RunConfig
+        @test ctrun("environment"=>Dict("MHD_DRAG_DT_MODE"=>mode,"MHD_TERMINAL_INDUCTION"=>"ct",
+                    "MHD_TERMINAL_PRESSURE_IMPLICIT"=>"1")) isa RunConfig
+        @test_throws ArgumentError ctrun("environment"=>Dict("MHD_DRAG_DT_MODE"=>mode,
+                    "MHD_TERMINAL_INDUCTION"=>"ssprk2"))
+        @test_throws ArgumentError ctrun("environment"=>Dict("MHD_DRAG_DT_MODE"=>mode,
+                    "MHD_TERMINAL_PRESSURE_IMPLICIT"=>"1"))
     end
     @test_throws ArgumentError ctrun("physics"=>Dict("glm_project_every"=>1))
     @test_throws ArgumentError ctrun("environment"=>Dict("MHD_GLM_PROJECT_EVERY"=>5))

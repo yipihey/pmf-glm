@@ -147,8 +147,8 @@ function terminal_pressure_ct_step!(solve_exponential!, s::MHDState{T}, dt::Real
                                     induction_dissipation::Real=0.05,
                                     induction_dissipation_order::Int=4,
                                     vcap::Real=Inf,
-                                    max_induction_subcycles::Int=256) where {T}
-    _require_glm(s, "terminal_pressure_ct_step! (cell-centred terminal induction)")
+                                    max_induction_subcycles::Int=256,
+                                    compensate::Bool=true) where {T}
     isfinite(gamma_drag) && gamma_drag > 0 ||
         error("terminal pressure step requires finite positive gamma_drag")
     pressure_coeff >= 0 || error("pressure_coeff must be non-negative")
@@ -205,7 +205,7 @@ function terminal_pressure_ct_step!(solve_exponential!, s::MHDState{T}, dt::Real
             gamma_drag=gamma_drag, pressure_coeff=pressure_coeff,
             cfl=induction_cfl, dissipation=induction_dissipation,
             dissipation_order=induction_dissipation_order, vcap=vcap,
-            max_subcycles=max_induction_subcycles)
+            max_subcycles=max_induction_subcycles, compensate=compensate)
     end
     return (nsub=result[1], vmax=result[2], eta=result[3], force_s, pressure_fft_s,
             finalize_s, induction_s, projection_s=0.0)

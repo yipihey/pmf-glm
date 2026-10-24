@@ -97,9 +97,29 @@ changes the field by O((k dx)^2) near the cutoff. The measured rms
 normalization values remain those of the generated field.
 {{< src "lib/MHDKernels/src/ct.jl" "ct_faces_from_cells!" >}}
 
+**Terminal and hybrid drag.** The overdamped paths advance the faces. The cell
+EMF $\mathbf v\times\mathbf B$ is computed exactly as for GLM (cell-centred $\mathbf v$ from
+the Lorentz force and pressure response, cell $\mathbf B$ = face average); each
+edge EMF is the mean of the four cells sharing the edge, and the faces advance by the
+discrete curl of the edge EMFs. The SSPRK2 `terminal_ct_induction!`, the
+pressure-implicit step and the radiation terminal induction keep the GLM stages,
+subcycling, `cfl` and `eta`; the order-2/order-4 dissipation is the Laplacian or
+bilaplacian of every face component with the same stencil, which commutes with
+the face divergence on a periodic grid. After each stage cell $\mathbf B$ is the face
+average and $E$ changes by the magnetic-energy change (as GLM). The first-order
+`terminal` velocity steps and the implicit B diffusion (a Fourier multiplier applied to each
+face component) do the same; the B projection of the terminal paths is skipped because
+the face divergence is already round-off. Face sums are Kahan-compensated through
+`ct.rbx/rby/rbz`, because plain Float32 summation of sub-ulp increments over 1000
+Euler steps raised $\Delta x\,\max|\nabla\cdot B|/B_{rms}$ to 1.6e-5 (1.4e-7 compensated).
+Genuinely cell-wise options are errors for CT: `MHD_TERMINAL_INDUCTION=ssprk2`
+(cell SSPRK2 with a GLM-style projection) and, with
+`MHD_TERMINAL_PRESSURE_IMPLICIT=1`, any induction other than `ct`.
+{{< src "lib/MHDKernels/src/terminal_ct.jl" "terminal_ct_induction!" >}}
+
 **Limits.** CT is periodic-only and implemented on the `ref` integrator only; the
-`cube` integrators, terminal and hybrid drag, and the GLM projection are
-rejected. Metal allows 31 buffer arguments per kernel and counts each scalar
+`cube` integrators and the GLM projection are rejected (terminal and hybrid drag
+are supported, see below). Metal allows 31 buffer arguments per kernel and counts each scalar
 argument as one, so the CT kernel (`step_ref_ct_kernel!`, generated from the same
 body as the GLM `step_ref_kernel!`) takes the CT arrays as one packed buffer
 and the grid/BC integers as one tuple; it runs on Metal. (GLM's `ref` kernel

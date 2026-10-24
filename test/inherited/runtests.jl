@@ -479,6 +479,7 @@ include("test_radiation_coupling.jl")
 include("test_recombination_transport.jl")
 include("test_passive_transport.jl")
 include("test_terminal_handoff_overlap.jl")
+include("test_terminal_ct_equivalence.jl")
 include("test_ct.jl")
 
 @testset "magnetic field-loop advection" begin

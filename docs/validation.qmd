@@ -154,6 +154,26 @@ high-k power at 1e-16 dominates the maxima. It writes `history_differences.tsv`,
 and status from `metadata.toml`. It is a difference report, not a gate;
 tolerances are chosen per the science matrix before measuring.
 
+### Terminal and hybrid CT vs GLM {#sec-ct-terminal-vs-glm}
+
+`test/inherited/test_terminal_ct_equivalence.jl` compares the terminal paths on an ABC-type
+field (a = 0.08, rho = 1 + 0.02 sin(x+y), `gamma_drag = 4`, T = 1; periodic unit box;
+signal S = ||B_glm(T) - B(0)||). Tolerances were fixed before the CT-GLM numbers
+were computed: d = ||B_ct - B_glm||/S below 0.20 (N=16) and 0.06 (N=32), a ratio d16/d32
+above 3, CT face divergence below 1e-12 (Float64) / 1e-5 (Float32) in
+units of `dx/Brms` at every step, total-energy bookkeeping at round-off, and Float32/Float64 CT
+agreement below 1e-3 S. The scheme difference is the edge average of the EMF plus
+the compact face curl versus the centred cell curl, an O((k dx)^2) symbol
+difference, hence the 4x fall per doubling. Measured: induction (order 4)
+2.74e-2 / 7.43e-3 (ratio 3.69), order 2 2.70e-2 / 7.36e-3, pressure step 2.01e-2 / 5.27e-3,
+radiation terminal 1.70e-2 / 4.30e-3, first-order velocity steps 1.80e-2 / 4.59e-3; CT
+divergence 2e-15 (Float64), 1.4e-6 (Float32 induction), 1.4e-7 (Float32 compensated Euler).
+The hybrid terminal -> handoff -> full MHD comparison satisfies its tolerances (2.6e-2 at N=16
+and N=32) but **not** the pre-declared decrease with N (ratio 1.02, `@test_broken`): the N=32 GLM
+Godunov run amplifies a 1e-6 relative momentum perturbation to |dB| = 1.8e-4 (CT: 5.0e-6),
+so that difference is dominated by noise growth in the GLM reference. The implicit B
+diffusion has no CPU solver and is checked on Metal only.
+
 ## Float32 and thermal floors {#sec-thermal-floors}
 
 The total-energy formulation reconstructs thermal energy by subtracting kinetic
