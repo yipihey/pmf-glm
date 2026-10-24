@@ -289,6 +289,23 @@ end
     @test all(isfinite, fields_to_host(s)[5])
 end
 
+@testset "CT faces keep a band-limited PMF field's energy" begin
+    # Batchelor field cut at 8 cells per wavelength. The face construction must not
+    # filter the cell field (a plain half-cell shift lost 7% of the magnetic energy here).
+    N = 32
+    s = allocate_state(backend(:cpu), Float64, (N,N,N); dx=1/N, mhd_solver=:ct)
+    r = init_pmf_batchelor!(s; brms=0.1, seed=3, kcut=2π*4)
+    @printf("  PMF N=%d kcut=8 cells/wavelength: cell-B rel L2 change=%.3e Emag ratio=%.5f div_face*dx/Brms=%.2e\n",
+            N, r.ct_faces.cell_b_rel_l2_change, r.ct_faces.magnetic_energy_ratio,
+            r.ct_faces.max_divb_face_dx_over_brms)
+    @test r.ct_faces.magnetic_energy_ratio > 0.99
+    @test r.ct_faces.cell_b_rel_l2_change < 0.07
+    @test r.ct_faces.max_divb_face_dx_over_brms < 1e-13
+    s2 = allocate_state(backend(:cpu), Float64, (N,N,N); dx=1/N, mhd_solver=:ct)
+    r2 = init_pmf_batchelor!(s2; brms=0.1, seed=3, kcut=2π*4, curl_symbol=:continuum)
+    @test r2.ct_faces.cell_b_rel_l2_change < 0.03
+end
+
 @testset "divergence preservation under evolution" begin
     for (T, tol, N) in ((Float64, 1e-12, 24), (Float32, 1e-5, 24))
         s = allocate_state(backend(:cpu), T, (N,N,N); dx=1/N, gamma=5/3, riemann=:hlld, mhd_solver=:ct)

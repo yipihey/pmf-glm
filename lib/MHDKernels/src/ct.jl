@@ -197,56 +197,75 @@ function _ct_install_faces!(s::MHDState{T}, bxf, byf, bzf) where {T}
     s
 end
 
-# wavenumber helpers for the host spectral initializer
-@inline function _ct_half_shift(m::Int,N::Int)
-    iseven(N) && m==N÷2 && return zero(ComplexF64)   # Nyquist: real part of exp(-iπ/2)
+# Half-cell phase θ = k dx/2 of rfft/fft index m (0-based) on an N-point axis; Nyquist
+# (even N, m = N/2) is reported separately because cos θ = 0 there.
+@inline function _ct_half_phase(m::Int,N::Int)
+    nyq = iseven(N) && m == N÷2
     mm = m > N/2 ? m-N : m
-    cis(-π*mm/N)
+    (nyq ? 0.0 : π*mm/N, nyq)
 end
-@inline _ct_gsym(m::Int,N::Int,dx::Float64) = (cis(2π*m/N)-1)/dx
 
 """
     ct_faces_from_cells!(s::MHDState) -> NamedTuple
 
 Build a discretely divergence-free face field from the cell-centred `B = s.U[6:8]` of a CT
-state (host Float64 FFTW). Per component: rfft of the cell field, shift to the lower face
-by `exp(-i k_d dx/2)` (the Nyquist plane of the shift axis, whose half-cell shift is not
-real, is dropped), project out the discrete face divergence with
-`g_d = (exp(i k_d dx) - 1)/dx` (`B̂f -= conj(g) (g·B̂f)/|g|²`, `k=0` skipped), irfft, and
-store the faces. Then `s.U[6:8]` become the face averages, `s.U[5]` is adjusted so the
-thermal pressure is unchanged (`E += ½|B_new|² - ½|B_old|²`), and `s.U[9] = 0`.
+state (host Float64 FFTW), changing the cell field as little as possible.
 
-Returns `(cell_b_rel_l2_change, max_divb_face_dx_over_brms)`: the relative L2 change of
-the cell field and the maximum face divergence times `dx` over the rms `|B|`. The
-projection is Hermitian-symmetric (`g(-k) = conj(g(k))` also on Nyquist planes), so those
-planes do not spoil the zero divergence (checked in `test/inherited/test_ct.jl`).
+The CT cell field is the average of its two faces, so with `θ_d = k_d dx/2` a face mode
+`f_d = b_d exp(-iθ_d)/cos θ_d` averages back to exactly `b_d`, and its face divergence
+`Σ_d (exp(2iθ_d)-1) f_d/dx = (2i/dx) Σ_d tan θ_d b_d`. The cell field is therefore
+projected orthogonally onto `t·b = 0` with `t_d = tan θ_d` (the smallest L2 change of the
+cell field that admits divergence-free faces), and the faces are built from the result.
+On a Nyquist plane of axis d (`cos θ_d = 0`) the face average of component d vanishes for
+any face field, so that component is dropped there. Both operations are
+Hermitian-symmetric, so the faces are real and divergence-free to round-off. (A plain
+half-cell shift of the cell field followed by a face projection instead filters every
+component by `cos θ_d` on the way back to the cell average: 7% of the magnetic energy of a
+Batchelor field cut at 8 cells per wavelength.)
+
+The centred-curl and continuum PMF fields are solenoidal under different symbols
+(`sin 2θ`, `θ`) than `tan θ`, so the projection changes them by O((k dx)^2) near the
+cutoff. Then `s.U[6:8]` become the face averages, `s.U[5]` is adjusted so the thermal
+pressure is unchanged (`E += ½|B_new|² - ½|B_old|²`), and `s.U[9] = 0`.
+
+Returns `(cell_b_rel_l2_change, magnetic_energy_ratio, max_divb_face_dx_over_brms)`.
 """
 function ct_faces_from_cells!(s::MHDState{T}) where {T}
     uses_ct(s) || error("ct_faces_from_cells! needs a CT state (mhd_solver=:ct)")
     Nx,Ny,Nz=s.dims; dx=Float64(s.dx)
     Bold=ntuple(d->reshape(Float64.(to_host(s.U[5+d])),Nx,Ny,Nz),3)
     Bh=ntuple(d->rfft(Bold[d]),3)
+    Fh=ntuple(d->similar(Bh[d]),3)
     nxr=Nx÷2+1
-    sx=[_ct_half_shift(m,Nx) for m in 0:nxr-1]; gx=[_ct_gsym(m,Nx,dx) for m in 0:nxr-1]
-    sy=[_ct_half_shift(m,Ny) for m in 0:Ny-1];  gy=[_ct_gsym(m,Ny,dx) for m in 0:Ny-1]
-    sz=[_ct_half_shift(m,Nz) for m in 0:Nz-1];  gz=[_ct_gsym(m,Nz,dx) for m in 0:Nz-1]
+    px=[_ct_half_phase(m,Nx) for m in 0:nxr-1]
+    py=[_ct_half_phase(m,Ny) for m in 0:Ny-1]
+    pz=[_ct_half_phase(m,Nz) for m in 0:Nz-1]
     for kk in 1:Nz, jj in 1:Ny, ii in 1:nxr
-        fx=Bh[1][ii,jj,kk]*sx[ii]; fy=Bh[2][ii,jj,kk]*sy[jj]; fz=Bh[3][ii,jj,kk]*sz[kk]
-        g2=abs2(gx[ii])+abs2(gy[jj])+abs2(gz[kk])
-        if g2>0
-            dot=(gx[ii]*fx+gy[jj]*fy+gz[kk]*fz)/g2
-            fx-=conj(gx[ii])*dot; fy-=conj(gy[jj])*dot; fz-=conj(gz[kk])*dot
+        (θx,nx),(θy,ny),(θz,nz)=px[ii],py[jj],pz[kk]
+        bx=nx ? zero(ComplexF64) : Bh[1][ii,jj,kk]
+        by=ny ? zero(ComplexF64) : Bh[2][ii,jj,kk]
+        bz=nz ? zero(ComplexF64) : Bh[3][ii,jj,kk]
+        tx=tan(θx); ty=tan(θy); tz=tan(θz)
+        t2=tx*tx+ty*ty+tz*tz
+        if t2>0
+            dot=(tx*bx+ty*by+tz*bz)/t2
+            bx-=tx*dot; by-=ty*dot; bz-=tz*dot
         end
-        Bh[1][ii,jj,kk]=fx; Bh[2][ii,jj,kk]=fy; Bh[3][ii,jj,kk]=fz
+        Bh[1][ii,jj,kk]=bx; Bh[2][ii,jj,kk]=by; Bh[3][ii,jj,kk]=bz
+        Fh[1][ii,jj,kk]=bx*cis(-θx)/cos(θx)
+        Fh[2][ii,jj,kk]=by*cis(-θy)/cos(θy)
+        Fh[3][ii,jj,kk]=bz*cis(-θz)/cos(θz)
     end
-    faces=ntuple(d->vec(irfft(Bh[d],Nx)),3)
+    faces=ntuple(d->vec(irfft(Fh[d],Nx)),3)
     _ct_install_faces!(s,to_device(s.be,faces[1],T),to_device(s.be,faces[2],T),
                        to_device(s.be,faces[3],T))
     Bnew=ntuple(d->reshape(Float64.(to_host(s.U[5+d])),Nx,Ny,Nz),3)
     num=sum(sum(abs2,Bnew[d].-Bold[d]) for d in 1:3)
     den=sum(sum(abs2,Bold[d]) for d in 1:3)
-    brms=sqrt(sum(sum(abs2,Bnew[d]) for d in 1:3)/length(Bnew[1]))
+    enew=sum(sum(abs2,Bnew[d]) for d in 1:3)
+    brms=sqrt(enew/length(Bnew[1]))
     (cell_b_rel_l2_change = den>0 ? sqrt(num/den) : 0.0,
+     magnetic_energy_ratio = den>0 ? enew/den : 1.0,
      max_divb_face_dx_over_brms = brms>0 ? max_divb_face(s)*dx/brms : 0.0)
 end
 
