@@ -278,9 +278,9 @@ hydrogen/thermal closure differs from full H/He evolution; early xHII and therma
 perturbations remain explicit model comparisons.
 
 The supplied N32 Metal run uses a 300 pG comoving guide field, perturbation
-fraction 0.025, and a 1 ckpc/h box. Its 36 resolved evolved observables pass the
+fraction 0.025, and a 1 ckpc/h box. Its 45 resolved evolved observables pass the
 5% amplitude and 0.03-radian phase gates over z=3200 to 3190; the measured worst
-errors are 0.201% and 2.20e-6 radians. The code, solver/reference hashes, and
+errors are 0.0759% and 1.79e-6 radians. The code, solver/reference hashes, and
 actual configuration are in the [gate](data/native-mode-metal/gate.json),
 [complex-mode table](data/native-mode-metal/comparison.tsv),
 [handoff metadata](data/native-mode-metal/handoff-metadata.json), and
@@ -291,9 +291,12 @@ through-recombination spatial/temporal convergence study.
 ![Actual standalone full-MHD Metal evolution and the independent photon-P1 oracle from the same joint handoff. Velocity is physical cm/s; magnetic amplitude is relative to the guide field.](data/native-mode-metal/comparison.png){#fig-native-mode fig-alt="Four panels overlay the actual Metal and independent P1 magnetic, baryon density, velocity, and dark matter Fourier amplitudes from redshift 3200 to 3190."}
 
 [Download the vector comparison figure](data/native-mode-metal/comparison.pdf).
-The matched threaded-CPU run also passes, with 0.201% maximum amplitude error:
+The matched threaded-CPU run also passes, with 0.0766% maximum amplitude error:
 [CPU gate](data/native-mode-cpu/gate.json) and
-[CPU raw comparisons](data/native-mode-cpu/comparison.tsv).
+[CPU raw comparisons](data/native-mode-cpu/comparison.tsv). Both are GLM runs of the
+same source fingerprint. The same case with `--mhd-solver=ct` passes on the CPU with
+0.0764% and 1.15e-6 radians, and differs from the GLM run by at most 6.9e-5 in
+relative amplitude and 1.2e-6 radians (`pmf-compare-solvers`).
 
 ### Independent small demo
 

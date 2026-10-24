@@ -1,9 +1,9 @@
 {
   "status": "PASS",
   "scope": "resolved mean-field full-MHD/shared photon-P1 modes",
-  "source_fingerprint_sha256": "c451ae02643b584381c05bf505b0f4eb3c1a9e735fc635776bf78f918d84dbd1",
+  "source_fingerprint_sha256": "4efc320dbf04e51f7840670c0c090e21bef67daafc9a07403cd21e88d535c795",
   "reference_source_sha256": {
-    "nonlinear_comparison.py": "7ba6406801e4f4c708aa8193635823fd3d50fa468bebe8731fbf0af282476d7f",
+    "nonlinear_comparison.py": "7a8726a3dca15133e1e5a42c574b04caf8224d46b236707ddfb0d7cffd10ccc4",
     "lmhd.py": "e2815fc5e473d55267b690c364893f1c12e2b02a8224231fe7b886c8e2fce5b7",
     "lya_rt.py": "b038e10399006cdeb82da7357abc908608adf480b03aafc77fe98dd69a60d799"
   },
@@ -11,12 +11,14 @@
   "background": "independent RECFAST-v2 hydrogen/temperature and Saha helium",
   "explicit_helium_perturbation": "model extension; xHII above z1700 diagnostic",
   "thermal_perturbations": "full-network extension; not gated against reduced oracle",
+  "mhd_solver": "glm",
   "response_table": null,
+  "response_table_sha256": null,
   "amplitude_tolerance": 0.05,
   "phase_tolerance_rad": 0.03,
-  "active_observables": 36,
+  "active_observables": 45,
   "failures": [],
-  "max_amplitude_error": 0.0020008184712047017,
-  "max_phase_error_rad": 2.1945680215298852e-06,
-  "mode_input_sha256": "5609b986ab92088ef3eba9ee1deb879d729567547be437d282dc35726594f9d5"
+  "max_amplitude_error": 0.0007590985433276742,
+  "max_phase_error_rad": 1.78594640242584e-06,
+  "mode_input_sha256": "63eebd5a99cecd75e84a84f002cfeb15d6e3a4a20dcd8ff3229464e0c8d7a114"
 }

@@ -50,7 +50,7 @@ spectrum_bins = 16
 energy_ledger_every = 1
 
 [environment]
-MHD_INITIAL_STATE_DIR = "/Users/tabel/Projects/pmf-glm/results/release-mode-metal/handoff"
+MHD_INITIAL_STATE_DIR = "/Users/tabel/Projects/pmf-glm/results/main-native-metal-glm/handoff"
 MHD_MEANFIELD_THETA = 0.7853981633974483
 MHD_MEANFIELD_PERT_FRAC = 0.025
 MHD_MEANFIELD_POLARIZATION = "magnetosonic"
