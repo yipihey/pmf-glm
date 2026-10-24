@@ -118,10 +118,41 @@ documented differences are not discrepancies to fit away:
 - Compare actual common redshifts from the `z` columns, not cycle numbers, and
   compare `divb_face_dx_over_brms` (CT, Float32 round-off) with the centred
   `divBdx_over_brms` (GLM). The centred value of a CT run is not constrained to zero.
+- Every workflow takes the solver the same way. `run_pmf.jl` and `run_suite.jl`
+  accept `--mhd-solver=glm|ct` (or set `run.mhd_solver` per suite case);
+  `validate_production.jl --mhd-solver=ct --output=DIR` runs the endpoint/restart
+  gate for CT (CT requires `--output`, so tracked `docs/data` evidence is not
+  touched; its record carries `mhd_solver` and the final centred and face
+  divergence); `validate_relative_velocities.jl OUT f32 ct` runs the controlled
+  velocity checks with CT. `scripts/validate.jl` runs the solver-agnostic Julia test
+  suite, which contains the CT regressions, so it has no solver flag.
 - The remaining agreement criteria are those of the
   [science matrix](#sec-science-matrix): define tolerances before measuring, and
   refine timestep and grid separately for each solver. CT runs on the CPU
   and Metal backends; CUDA is `NOT_RUN`.
+
+### Matched-pair workflow {#sec-ct-vs-glm-workflow}
+
+`examples/ct-vs-glm-suite.toml` defines the matched pair (identical except
+`run.mhd_solver`) of the smallest cosmology case:
+
+```sh
+julia --project=. -t auto scripts/run_suite.jl examples/ct-vs-glm-suite.toml          # dry run
+julia --project=. -t auto scripts/run_suite.jl examples/ct-vs-glm-suite.toml --execute
+uv run pmf-analyze results/ct-vs-glm/glm      # and .../ct
+uv run pmf-compare-runs results/ct-vs-glm/glm results/ct-vs-glm/ct
+```
+
+`pmf-compare-runs RUN_A RUN_B` pairs `history.tsv` rows and `spectra.tsv` epochs at
+common redshifts (`--z-tol`, absolute, default 1e-3; never by cycle), and reports
+the relative difference `(B - A)/A` of every history column and of each spectrum
+field, plus both divergence diagnostics listed separately (never differenced).
+Reference values below `--floor` (default 1e-8) times the column/field-epoch
+maximum are skipped, not reported as zero: without that floor round-off-level
+high-k power at 1e-16 dominates the maxima. It writes `history_differences.tsv`,
+`spectra_differences.tsv`, and `run_comparison.json` and states each run's solver
+and status from `metadata.toml`. It is a difference report, not a gate;
+tolerances are chosen per the science matrix before measuring.
 
 ## Float32 and thermal floors {#sec-thermal-floors}
 

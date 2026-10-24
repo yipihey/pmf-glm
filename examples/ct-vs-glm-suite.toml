@@ -1,0 +1,28 @@
+# Matched pair for comparing the constrained-transport (CT) and GLM solvers: the two cases
+# are identical except run.mhd_solver. This is the smallest full-physics cosmology case
+# (see cosmology-smoke.toml); it is an installation/comparison check, not a science result.
+# For a real comparison raise run.n, extend cosmology.zend and keep the pair identical.
+#
+#   julia --project=. -t auto scripts/run_suite.jl examples/ct-vs-glm-suite.toml            # dry run
+#   julia --project=. -t auto scripts/run_suite.jl examples/ct-vs-glm-suite.toml --execute
+#   uv run pmf-analyze results/ct-vs-glm/glm       # and again for .../ct
+#   uv run pmf-compare-runs results/ct-vs-glm/glm results/ct-vs-glm/ct
+#
+# pmf-compare-runs pairs history.tsv rows and spectra.tsv epochs at common redshifts and
+# reports the relative difference (CT - GLM)/GLM of every history column and of the B and
+# density spectra, and lists the two divergence diagnostics separately (centred divBdx for
+# GLM, exact face divb_face for CT). Check both metadata.toml files report COMPLETED; read
+# docs/validation.qmd "Comparing CT and GLM runs" for the documented, expected differences.
+# `--mhd-solver=ct` on run_suite.jl would instead switch every case of any suite to CT.
+base_config = "cosmology-smoke.toml"
+output_dir = "../results/ct-vs-glm"
+
+[[cases]]
+label = "glm"
+[cases.run]
+mhd_solver = "glm"
+
+[[cases]]
+label = "ct"
+[cases.run]
+mhd_solver = "ct"
