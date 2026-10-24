@@ -120,10 +120,10 @@ Genuinely cell-wise options are errors for CT: `MHD_TERMINAL_INDUCTION=ssprk2`
 **Limits.** CT is periodic-only and implemented on the `ref` integrator only; the
 `cube` integrators and the GLM projection are rejected (terminal and hybrid drag
 are supported, see below). Metal allows 31 buffer arguments per kernel and counts each scalar
-argument as one, so the CT kernel (`step_ref_ct_kernel!`, generated from the same
-body as the GLM `step_ref_kernel!`) takes the CT arrays as one packed buffer
-and the grid/BC integers as one tuple; it runs on Metal. (GLM's `ref` kernel
-still exceeds the limit on Metal, as before CT; GLM runs there use `cube`.)
+argument as one, so the packed reference kernel (`step_ref_packed_kernel!`, generated from the same
+body as the CPU GLM `step_ref_kernel!`) takes the grid/BC integers and the 13 scalars as tuples (and, for
+CT, the CT arrays as one packed buffer); it runs on Metal for both solvers. GLM `:ref` on a GPU backend
+launches this kernel; the CPU keeps the historic GLM kernel, whose results are bit-for-bit unchanged.
 CUDA is `NOT_RUN`. CT allocates 21 extra `N^3` arrays (three face fields, 15
 flux/EMF workspace arrays and three face remainders, in one buffer) on top of GLM's 18. From a state at
 rest the face mass fluxes are rounding noise and the upwind choice of the edge
