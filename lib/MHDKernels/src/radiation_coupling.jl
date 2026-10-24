@@ -87,6 +87,13 @@ struct RadiationWorkspace{T,A,V,H,C,Q,P,K,B,D,M,L,S,X}
     velocity_hat::NTuple{3,C}
     density_hat::C
     authoritative_density_hat::Q
+    # Copy of the density-mode increment taken before the inverse transforms and
+    # restored into `density_hat` after them for the commit. FFTW's multidimensional c2r transform destroys its complex input, so
+    # `density_hat` (a slice of `hat_batch`) is garbage once the corrections
+    # have been inverse-transformed on the CPU. Device FFTs (MPS, cuFFT) leave
+    # it intact, so there this is the authoritative array itself (a sentinel:
+    # `density_increment_hat === authoritative_density_hat` means "no copy").
+    density_increment_hat::Q
     longitudinal_propagator::P
     longitudinal_propagator_signature::K
     magnetic_residual::M
@@ -210,6 +217,8 @@ function allocate_radiation_workspace(s::MHDState{T};
     density_hat=reshape(view(hat_batch,:,:,:,1),hdims)
     hats=ntuple(d -> reshape(view(hat_batch,:,:,:,d+1),hdims),3)
     authoritative_density_hat=device_zeros(s.be,Complex{T},hdims)
+    density_increment_hat=s.be isa CPU ?
+        device_zeros(s.be,Complex{T},hdims) : authoritative_density_hat
     max_mode2=3*(n÷2-1)^2
     longitudinal_propagator=device_zeros(s.be,T,(4,5,max_mode2+1))
     rho_mean=T(sum(s.U[1])/length(s.U[1]))
@@ -219,7 +228,8 @@ function allocate_radiation_workspace(s::MHDState{T};
     ct_snapshot=uses_ct(s) ? device_zeros(s.be,T,(6*ncells(s),)) : nothing
     RadiationWorkspace(packed,real_batch,fft_real,corr,density_perturbation,
                        rho_mean,hat_batch,hats,density_hat,
-                       authoritative_density_hat,longitudinal_propagator,
+                       authoritative_density_hat,density_increment_hat,
+                       longitudinal_propagator,
                        Ref(typemax(UInt)),magnetic_residual,energy_residual,
                        Ref(false),Ref(false),Ref(1.0),ct_snapshot)
 end
@@ -1410,8 +1420,15 @@ function _radiation_transform_velocity_density!(ws::RadiationWorkspace,s::MHDSta
         _radiation_density_hat_increment_k!(s.be)(ws.density_hat,
             ws.authoritative_density_hat;ndrange=length(ws.density_hat))
         KA.synchronize(s.be)
+        # Preserve the increment: the c2r inverse below may destroy it (CPU).
+        ws.density_increment_hat===ws.authoritative_density_hat ||
+            copyto!(ws.density_increment_hat,ws.density_hat)
     end
     _radiation_inverse_triplet!(ws.correction,ws)
+    # Restore the increment for `_radiation_commit_density_hat!` (CPU c2r).
+    persistent_density && density_residual &&
+        ws.density_increment_hat!==ws.authoritative_density_hat &&
+        copyto!(ws.density_hat,ws.density_increment_hat)
     return ws.correction
 end
 
