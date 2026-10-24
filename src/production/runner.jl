@@ -1299,23 +1299,27 @@ end
     end
 end
 
-@kernel function _pressure_implicit_finalize_k!(orho, omx, omy, omz, oE, oBx, oBy, oBz, opsi,
-                                                @Const(rho), @Const(mx), @Const(my), @Const(mz), @Const(E),
-                                                @Const(Bx), @Const(By), @Const(Bz), @Const(psi),
+# Centred pressure-implicit finalize.  Every array argument is distinct (no output
+# aliases an input): this kernel reads rho_new, fxm/fym/fzm and Bx/By/Bz at
+# neighbouring cells (pressure gradient and the centred curl of v x B), so any
+# output sharing storage with them would be a cross-work-item data race
+# (thread/GPU-scheduling dependent results).  `eint` is the thermal energy
+# stashed by `_pressure_implicit_stash_eint_k!`; `rho` is read at own cell only.
+# psi is not written (the caller keeps U[9] across the step).
+@kernel function _pressure_implicit_finalize_k!(orho, omx, omy, omz, oE, oBx, oBy, oBz,
+                                                @Const(rho), @Const(eint),
+                                                @Const(Bx), @Const(By), @Const(Bz),
                                                 @Const(rho_new), @Const(fxm), @Const(fym), @Const(fzm),
                                                 N::Int, dt, inv2dx, gamma_code, pressure_coeff,
                                                 gamma_gas, smallr, smallE, vcap)
     c = @index(Global)
     @inbounds begin
-        T = eltype(E)
+        T = eltype(eint)
         i = (c - 1) % N + 1
         j = ((c - 1) ÷ N) % N + 1
         k = (c - 1) ÷ (N * N) + 1
 
         r0 = max(rho[c], smallr)
-        ek0 = T(0.5) * (mx[c] * mx[c] + my[c] * my[c] + mz[c] * mz[c]) / r0
-        eb0 = T(0.5) * (Bx[c] * Bx[c] + By[c] * By[c] + Bz[c] * Bz[c])
-        eint = max(E[c] - ek0 - eb0, smallE)
 
         nrho = max(rho_new[c], smallr)
         vx, vy, vz = _pressure_implicit_v_at(rho_new, fxm, fym, fzm, i, j, k, N,
@@ -1350,9 +1354,22 @@ end
         eb1 = T(0.5) * (nbx * nbx + nby * nby + nbz * nbz)
         orho[c] = nrho
         omx[c] = nmx; omy[c] = nmy; omz[c] = nmz
-        oE[c] = max(eint * (nrho / r0)^gamma_gas + ek1 + eb1, smallE)
+        oE[c] = max(eint[c] * (nrho / r0)^gamma_gas + ek1 + eb1, smallE)
         oBx[c] = nbx; oBy[c] = nby; oBz[c] = nbz
-        opsi[c] = psi[c]
+    end
+end
+
+# In-place own-cell stash of the thermal energy into E (single array, one work-item per
+# index, reads precede the write; mx/my/mz/rho/B are separate arrays).
+@kernel function _pressure_implicit_stash_eint_k!(E, @Const(rho), @Const(mx), @Const(my), @Const(mz),
+                                                  @Const(Bx), @Const(By), @Const(Bz), smallr, smallE)
+    c = @index(Global)
+    @inbounds begin
+        T = eltype(E)
+        r0 = max(rho[c], smallr)
+        ek0 = T(0.5) * (mx[c] * mx[c] + my[c] * my[c] + mz[c] * mz[c]) / r0
+        eb0 = T(0.5) * (Bx[c] * Bx[c] + By[c] * By[c] + Bz[c] * Bz[c])
+        E[c] = max(E[c] - ek0 - eb0, smallE)
     end
 end
 
@@ -1811,6 +1828,11 @@ function _terminal_pressure_implicit_step!(be, s, dt::Real, gamma_code::Real,
                                          s.U[1], s.U[5], s.U[6], s.U[7], s.U[8],
                                          fx, fy, fz, T(s.smallr), T(1e-30);
                                          ndrange=length(s.U[1]))
+            # Aliasing audit: outputs are s.scratch[1:9], of which scratch[1] (= `source` = rho_new)
+            # is read at neighbour cells by `_pressure_implicit_v_at`.  The only write to it is
+            # orho[c] = max(rho_new[c], smallr), i.e. the value already stored, so the overlap is
+            # benign unless rho_new < smallr (a floored cell).  scratch[5] (= eint) is read at own
+            # cell only, before the same work-item's write.  Force fields are in U[2:4], distinct.
             _pressure_implicit_hydro_finalize_k!(be)(s.scratch..., s.U[1],
                                                       s.U[6], s.U[7], s.U[8], s.U[9],
                                                       sol, source, s.U[2], s.U[3], s.U[4],
@@ -1877,20 +1899,37 @@ function _terminal_pressure_implicit_step!(be, s, dt::Real, gamma_code::Real,
     elseif induction !== :centered
         error("unknown terminal induction mode $induction")
     end
+    # Race-free buffer plan (all arrays handed to one kernel are distinct):
+    #   sc = old scratch, u = old U.  sc[1] holds rho_new (`source`), sc[2:4] the force
+    #   fields; both are read at neighbour cells.  U[5] is overwritten in place with the
+    #   thermal energy (own cell).  Outputs: rho,mx,my,mz,E -> sc[5:9]; Bx,By,Bz -> u[2:4]
+    #   (the old momenta, dead after the stash).  u[1] (old rho) and u[6:8] (old B) stay
+    #   intact as the nonlinear-limiter reference.  No extra memory is allocated.
+    #   New U = (sc5,sc6,sc7,sc8,sc9,u2,u3,u4,u9); new scratch = (sc1..4,u1,u5,u6,u7,u8).
     finalize_s = @elapsed begin
-        _pressure_implicit_finalize_k!(be)(s.scratch..., s.U..., source, fx, fy, fz,
+        sc = s.scratch
+        u = s.U
+        _pressure_implicit_stash_eint_k!(be)(u[5], u[1], u[2], u[3], u[4], u[6], u[7], u[8],
+                                             T(s.smallr), T(1e-30);
+                                             ndrange=length(s.U[1]))
+        KA.synchronize(be)
+        _pressure_implicit_finalize_k!(be)(sc[5], sc[6], sc[7], sc[8], sc[9], u[2], u[3], u[4],
+                                           u[1], u[5], u[6], u[7], u[8],
+                                           source, fx, fy, fz,
                                            N, T(dt), inv2dx, T(gamma_code), T(pressure_coeff),
                                            T(s.γ), T(s.smallr), T(1e-30), T(vcap);
                                            ndrange=length(s.U[1]))
+        KA.synchronize(be)
         if isfinite(rho_rel_limit) || isfinite(b_rel_limit)
-            _terminal_nonlinear_limit_k!(be)(s.scratch[1], s.scratch[2], s.scratch[3], s.scratch[4],
-                                             s.scratch[5], s.scratch[6], s.scratch[7], s.scratch[8],
-                                             s.U[1], s.U[6], s.U[7], s.U[8],
+            # In place on the new fields (own-cell); references are the distinct old rho, B.
+            _terminal_nonlinear_limit_k!(be)(sc[5], sc[6], sc[7], sc[8], sc[9], u[2], u[3], u[4],
+                                             u[1], u[6], u[7], u[8],
                                              T(s.smallr), T(1e-30), T(rho_rel_limit), T(b_rel_limit);
                                              ndrange=length(s.U[1]))
+            KA.synchronize(be)
         end
-        KA.synchronize(be)
-        s.U, s.scratch = s.scratch, s.U
+        s.U = (sc[5], sc[6], sc[7], sc[8], sc[9], u[2], u[3], u[4], u[9])
+        s.scratch = (sc[1], sc[2], sc[3], sc[4], u[1], u[5], u[6], u[7], u[8])
     end
     return (nsub=1, force_s, pressure_fft_s, finalize_s, induction_s, projection_s)
 end
